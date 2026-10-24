@@ -248,9 +248,3 @@ Allocates `size` bytes and copies the contents of `data` into the arena.
 2. **Overflow Safety:** All boundary computations calculate remaining space using subtraction (`size > capacity - start`) rather than addition (`start + size > capacity`), avoiding unsigned integer wraparound vulnerabilities.
 3. **Array Allocation Overflow Guard:** `arena_alloc_buffer` verifies that `size * sizeof(type)` cannot exceed `SIZE_MAX` before attempting allocation.
 4. **Ownership Invariant:** The `can_free` flag guarantees that arenas backed by stack memory or static storage will not trigger invalid `free()` calls when `arena_free()` is executed.
-
----
-
-## License
-
-This software is available under the **MIT License** or **Public Domain** (choose whichever fits your project best).
