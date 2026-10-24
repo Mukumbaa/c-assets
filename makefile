@@ -23,9 +23,12 @@ OBJS := $(SRCS:$(SRC_DIR)/%.c=$(BUILD_DIR)/%.o)
 # autogen .d files
 DEPS := $(OBJS:.o=.d)
 
-.PHONY: all clean run json test
+.PHONY: all clean run json test standalone
 
 all: $(TARGET)
+
+standalone:
+	@for d in lib*/; do (cd "$$d" && lua ../headeronly.lua "$${d%/}.c" "$${d%/}.h"); done
 
 $(TARGET): $(OBJS) | $(OUT_DIR)
 	$(CC) $(OBJS) $(LDFLAGS) $(LDLIBS) -o $@

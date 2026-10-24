@@ -97,6 +97,8 @@ LIBARGV_DEF void argv_print_help(const CliParser *p);
 #endif
 
 #ifdef LIBARGV_IMPLEMENTATION
+#ifndef LIBARGV_IMPLEMENTED
+#define LIBARGV_IMPLEMENTED
 
 #include <stdlib.h>
 #include <string.h>
@@ -646,4 +648,5 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, char **argv) {
     return ARGV_OK;
 }
 
+#endif // LIBARGV_IMPLEMENTED
 #endif // LIBARGV_IMPLEMENTATION

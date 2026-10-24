@@ -48,6 +48,8 @@ LIBMAP_DEF void hashmap_foreach(const hashmap *hm, hashmap_callback cb, void *us
 #endif
 
 #ifdef LIBMAP_IMPLEMENTATION
+#ifndef LIBMAP_IMPLEMENTED
+#define LIBMAP_IMPLEMENTED
 
 #include <stdint.h>
 #include <stdio.h>
@@ -301,4 +303,5 @@ LIBMAP_DEF void hashmap_foreach(const hashmap *hm, hashmap_callback cb, void *us
     }
 }
 
+#endif // LIBMAP_IMPLEMENTED
 #endif // LIBMAP_IMPLEMENTATION

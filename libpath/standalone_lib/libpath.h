@@ -31,6 +31,8 @@ LIBPATH_DEF char *path_canonicalize(const char *path);
 #endif
 
 #ifdef LIBPATH_IMPLEMENTATION
+#ifndef LIBPATH_IMPLEMENTED
+#define LIBPATH_IMPLEMENTED
 
 #include <stdlib.h>
 
@@ -754,4 +756,5 @@ LIBPATH_DEF char *path_canonicalize(const char *path){
 
 }
 
+#endif // LIBPATH_IMPLEMENTED
 #endif // LIBPATH_IMPLEMENTATION

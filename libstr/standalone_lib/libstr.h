@@ -81,6 +81,8 @@ LIBSTR_DEF void   str_free_split(String *arr, int count);
 #endif
 
 #ifdef LIBSTR_IMPLEMENTATION
+#ifndef LIBSTR_IMPLEMENTED
+#define LIBSTR_IMPLEMENTED
 
 #include <ctype.h>
 
@@ -732,4 +734,5 @@ LIBSTR_DEF void str_free_split(String *arr, int count) {
     free(arr);
 }
 
+#endif // LIBSTR_IMPLEMENTED
 #endif // LIBSTR_IMPLEMENTATION

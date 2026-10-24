@@ -62,6 +62,8 @@ LIBLOG_DEF void log_set_lock(log_LockFn function, void *udata);
 #endif
 
 #ifdef LIBLOG_IMPLEMENTATION
+#ifndef LIBLOG_IMPLEMENTED
+#define LIBLOG_IMPLEMENTED
 
 #include <stdarg.h>
 
@@ -184,4 +186,5 @@ LIBLOG_DEF void log_internal(log_type lt, const char *file, int line, const char
   }
 }
 
+#endif // LIBLOG_IMPLEMENTED
 #endif // LIBLOG_IMPLEMENTATION

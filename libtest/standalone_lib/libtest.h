@@ -182,6 +182,8 @@ LIBTEST_DEF int test_run(void);
 #endif
 
 #ifdef LIBTEST_IMPLEMENTATION
+#ifndef LIBTEST_IMPLEMENTED
+#define LIBTEST_IMPLEMENTED
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -281,4 +283,5 @@ LIBTEST_DEF int test_run(void) {
   return failed;
 }
 
+#endif // LIBTEST_IMPLEMENTED
 #endif // LIBTEST_IMPLEMENTATION

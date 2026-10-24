@@ -46,6 +46,8 @@ LIBBIT_DEF int64_t bit_reader_read_bits(bit_reader *br, int len);  // Legge 'len
 #endif // BIT_IO_H
 
 #ifdef LIBBIT_IMPLEMENTATION
+#ifndef LIBBIT_IMPLEMENTED
+#define LIBBIT_IMPLEMENTED
 
 /* ========================================================================= */
 /*                              BIT WRITER                                   */
@@ -125,4 +127,5 @@ LIBBIT_DEF int64_t bit_reader_read_bits(bit_reader *br, int len) {
     return (int64_t)val;
 }
 
+#endif // LIBBIT_IMPLEMENTED
 #endif // LIBBIT_IMPLEMENTATION
