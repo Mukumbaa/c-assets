@@ -274,7 +274,7 @@ gcc -Wall -Wextra main.c -o test_runner
 
 Output:
 ```text
-Avvio suite di test per libvec...
+Start tests
 
 [ RUN ] VectorInitFree.DefaultInit
 [ OK ]
