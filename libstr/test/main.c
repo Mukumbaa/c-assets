@@ -2,17 +2,12 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
-// Implementazione del test runner
 #define LIBTEST_IMPLEMENTATION
 #include "../../libtest/standalone_lib/libtest.h"
 
-// Implementazione della libreria stringhe
 #define LIBSTR_IMPLEMENTATION
 #include "../standalone_lib/libstr.h"
 
-// ==============================================================================
-// SUITE: Lifecycle & Memory Management
-// ==============================================================================
 
 TEST(str_lifecycle, init_and_empty) {
     String s1 = str_init("Hello");
@@ -21,7 +16,6 @@ TEST(str_lifecycle, init_and_empty) {
     ASSERT_TRUE(s1.capacity >= 16);
     str_destroy(&s1);
 
-    // Init con NULL deve restituire una stringa vuota valida
     String s2 = str_init(NULL);
     ASSERT_EQ(s2.len, 0);
     ASSERT_STR_EQ(s2.str, "");
@@ -49,7 +43,6 @@ TEST(str_lifecycle, duplication) {
 
     ASSERT_EQ(copy.len, orig.len);
     ASSERT_STR_EQ(copy.str, orig.str);
-    // Assicuriamoci che i puntatori ai buffer siano diversi (deep copy)
     ASSERT_TRUE(copy.str != orig.str);
 
     str_destroy(&orig);
@@ -70,7 +63,6 @@ TEST(str_lifecycle, clear_and_reset) {
     str_clear(&s);
     ASSERT_EQ(s.len, 0);
     ASSERT_STR_EQ(s.str, "");
-    // str_clear non deve deallocare il buffer
     ASSERT_EQ(s.capacity, old_cap);
 
     str_append_cstr(&s, "Reused");
@@ -83,15 +75,12 @@ TEST(str_lifecycle, clear_and_reset) {
     str_destroy(&s);
 }
 
-// ==============================================================================
-// SUITE: Capacity & Buffer Sizing
-// ==============================================================================
 
 TEST(str_capacity, reserve_and_shrink) {
     String s = str_init("shrinkable");
     ASSERT_TRUE(str_reserve(&s, 128));
     ASSERT_TRUE(s.capacity >= 128);
-    ASSERT_STR_EQ(s.str, "shrinkable"); // Il contenuto deve restare integro
+    ASSERT_STR_EQ(s.str, "shrinkable");
 
     ASSERT_TRUE(str_shrink_to_fit(&s));
     ASSERT_EQ(s.capacity, s.len + 1);
@@ -100,9 +89,6 @@ TEST(str_capacity, reserve_and_shrink) {
     str_destroy(&s);
 }
 
-// ==============================================================================
-// SUITE: Appending & Concatenation
-// ==============================================================================
 
 TEST(str_concat, push_and_pop_char) {
     String s = str_empty();
@@ -119,12 +105,12 @@ TEST(str_concat, push_and_pop_char) {
     ASSERT_STR_EQ(s.str, "AB");
     ASSERT_EQ(s.len, 2);
 
-    ASSERT_TRUE(str_pop(&s, NULL)); // Pop senza salvare il carattere
+    ASSERT_TRUE(str_pop(&s, NULL));
     ASSERT_STR_EQ(s.str, "A");
     ASSERT_EQ(s.len, 1);
 
     ASSERT_TRUE(str_pop(&s, NULL));
-    ASSERT_FALSE(str_pop(&s, NULL)); // Pop su stringa vuota deve fallire
+    ASSERT_FALSE(str_pop(&s, NULL));
 
     str_destroy(&s);
 }
@@ -150,11 +136,9 @@ TEST(str_concat, insert_at_index) {
     String s = str_init("ac");
     String b = str_init("b");
 
-    // Inserimento in mezzo
     ASSERT_TRUE(str_cat(&s, &b, 1));
     ASSERT_STR_EQ(s.str, "abc");
 
-    // Inserimento in testa
     String head = str_init("start: ");
     ASSERT_TRUE(str_cat(&s, &head, 0));
     ASSERT_STR_EQ(s.str, "start: abc");
@@ -164,16 +148,13 @@ TEST(str_concat, insert_at_index) {
     str_destroy(&s);
 }
 
-// Test critico: verifica che appendere una stringa a se stessa non causi use-after-free
 TEST(str_concat, self_append_aliasing) {
     String s = str_init("A");
 
-    // Raddoppia la stringa più volte forzando diverse riallocazioni del buffer
     for (int i = 0; i < 6; i++) {
         ASSERT_TRUE(str_append(&s, &s));
     }
 
-    // 1 * 2^6 = 64 caratteri 'A'
     ASSERT_EQ(s.len, 64);
     for (size_t i = 0; i < s.len; i++) {
         ASSERT_EQ(s.str[i], 'A');
@@ -194,9 +175,6 @@ TEST(str_concat, copy_overwrite) {
     str_destroy(&src);
 }
 
-// ==============================================================================
-// SUITE: Extraction & In-Place Removal / Replacement
-// ==============================================================================
 
 TEST(str_edit, substring) {
     String s = str_init("The quick brown fox");
@@ -206,13 +184,11 @@ TEST(str_edit, substring) {
     ASSERT_EQ(sub.len, 5);
     str_destroy(&sub);
 
-    // Substr che supera la fine della stringa: deve troncarsi correttamente
     String tail = str_substr(&s, 16, 50);
     ASSERT_STR_EQ(tail.str, "fox");
     ASSERT_EQ(tail.len, 3);
     str_destroy(&tail);
 
-    // Substr oltre i limiti: restituisce stringa vuota
     String empty = str_substr(&s, 100, 5);
     ASSERT_TRUE(str_is_empty(&empty));
     str_destroy(&empty);
@@ -223,12 +199,10 @@ TEST(str_edit, substring) {
 TEST(str_edit, remove_range) {
     String s = str_init("Hello Beautiful World");
 
-    // Rimuove "Beautiful " (10 caratteri dall'indice 6)
     ASSERT_TRUE(str_remove(&s, 6, 10));
     ASSERT_STR_EQ(s.str, "Hello World");
     ASSERT_EQ(s.len, 11);
 
-    // Rimuove fino alla fine
     ASSERT_TRUE(str_remove(&s, 5, 20));
     ASSERT_STR_EQ(s.str, "Hello");
     ASSERT_EQ(s.len, 5);
@@ -239,24 +213,17 @@ TEST(str_edit, remove_range) {
 TEST(str_edit, replace_occurrences) {
     String s = str_init("apple, banana, apple, orange");
 
-    // Sostituzione con parola di lunghezza diversa
     ASSERT_TRUE(str_replace(&s, "apple", "strawberry"));
     ASSERT_STR_EQ(s.str, "strawberry, banana, strawberry, orange");
 
-    // Sostituzione con parola più corta
     ASSERT_TRUE(str_replace(&s, "strawberry", "fig"));
     ASSERT_STR_EQ(s.str, "fig, banana, fig, orange");
 
-    // Sostituzione di un termine inesistente (la stringa resta uguale)
     ASSERT_TRUE(str_replace(&s, "pineapple", "mango"));
     ASSERT_STR_EQ(s.str, "fig, banana, fig, orange");
 
     str_destroy(&s);
 }
-
-// ==============================================================================
-// SUITE: Transformations & Trimming
-// ==============================================================================
 
 TEST(str_transform, trimming) {
     String s1 = str_init("   \t  leading");
@@ -290,7 +257,7 @@ TEST(str_transform, case_conversions) {
 TEST(str_transform, reverse) {
     String s = str_init("step on no pets");
     str_reverse(&s);
-    ASSERT_STR_EQ(s.str, "step on no pets"); // palindromo
+    ASSERT_STR_EQ(s.str, "step on no pets");
     str_destroy(&s);
 
     String s2 = str_init("12345");
@@ -299,9 +266,6 @@ TEST(str_transform, reverse) {
     str_destroy(&s2);
 }
 
-// ==============================================================================
-// SUITE: Comparison & Searching
-// ==============================================================================
 
 TEST(str_query, equality_and_comparisons) {
     String a = str_init("alpha");
@@ -339,25 +303,18 @@ TEST(str_query, prefix_and_suffix) {
 TEST(str_query, contains_and_find_last) {
     String s = str_init("The quick brown Fox jumps over the lazy fox");
 
-    // Case-sensitive search
     ASSERT_EQ(str_contains_cstr(&s, "Fox", CASE_SENSITIVE), 16);
     ASSERT_EQ(str_contains_cstr(&s, "fox", CASE_SENSITIVE), 40);
     ASSERT_EQ(str_contains_cstr(&s, "elephant", CASE_SENSITIVE), -1);
 
-    // Case-insensitive search
     ASSERT_EQ(str_contains_cstr(&s, "fox", NO_CASE_SENSITIVE), 16);
 
-    // Find last
     ASSERT_EQ(str_find_last(&s, "the", NO_CASE_SENSITIVE), 31);
     ASSERT_EQ(str_find_last(&s, "The", CASE_SENSITIVE), 0);
     ASSERT_EQ(str_find_last(&s, "not_found", CASE_SENSITIVE), -1);
 
     str_destroy(&s);
 }
-
-// ==============================================================================
-// SUITE: Split & Join
-// ==============================================================================
 
 TEST(str_tokenization, split_basic) {
     String s = str_init("one,two,three,four");
@@ -398,7 +355,6 @@ TEST(str_tokenization, join_strings) {
     ASSERT_TRUE(str_join(&joined, tokens, 3, "-"));
     ASSERT_STR_EQ(joined.str, "2026-03-30");
 
-    // Join senza separatore
     String no_sep = str_empty();
     ASSERT_TRUE(str_join(&no_sep, tokens, 3, ""));
     ASSERT_STR_EQ(no_sep.str, "20260330");
@@ -409,10 +365,6 @@ TEST(str_tokenization, join_strings) {
     str_destroy(&joined);
     str_destroy(&no_sep);
 }
-
-// ==============================================================================
-// MAIN RUNNER
-// ==============================================================================
 
 int main(void) {
     printf("=== TEST SUITE: libstr.h (via libtest.h) ===\n\n");

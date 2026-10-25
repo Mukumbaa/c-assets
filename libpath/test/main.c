@@ -1,17 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-// Includiamo l'implementazione del tuo test runner
 #define LIBTEST_IMPLEMENTATION
 #include "../../libtest/standalone_lib/libtest.h"
 
-// Includiamo l'implementazione della libreria path
 #define LIBPATH_IMPLEMENTATION
 #include "../standalone_lib/libpath.h"
 
-// ==============================================================================
-// SUITE: Basename & Dirname
-// ==============================================================================
 
 TEST(path_basic, basename_cases) {
     ASSERT_STR_EQ(path_basename("foo/bar.txt"), "bar.txt");
@@ -44,9 +39,6 @@ TEST(path_basic, dirname_cases) {
     free(d5);
 }
 
-// ==============================================================================
-// SUITE: Extensions & Stems
-// ==============================================================================
 
 TEST(path_ext, extension_queries) {
     ASSERT_STR_EQ(path_extension("archive.tar.gz"), "gz");
@@ -83,27 +75,20 @@ TEST(path_ext, set_extension) {
     ASSERT_STR_EQ(e3, "document.pdf");
     free(e3);
 
-    // Rimozione estensione passando NULL o stringa vuota
     char *e4 = path_set_extension("archive.tar.gz", NULL);
     ASSERT_STR_EQ(e4, "archive.tar");
     free(e4);
 }
-
-// ==============================================================================
-// SUITE: Join & Normalization
-// ==============================================================================
 
 TEST(path_manipulation, join_paths) {
     char *j1 = path_join("folder", "file.txt");
     ASSERT_STR_EQ(j1, "folder/file.txt");
     free(j1);
 
-    // Gestione slash finale nel base
     char *j2 = path_join("folder/", "file.txt");
     ASSERT_STR_EQ(j2, "folder/file.txt");
     free(j2);
 
-    // Argomenti vuoti
     char *j3 = path_join("", "subpath");
     ASSERT_STR_EQ(j3, "subpath");
     free(j3);
@@ -112,7 +97,6 @@ TEST(path_manipulation, join_paths) {
     ASSERT_STR_EQ(j4, "basepath");
     free(j4);
 
-    // Se il secondo percorso è assoluto, deve sovrascrivere il base
     char *j5 = path_join("basepath", "/absolute/path");
     ASSERT_STR_EQ(j5, "/absolute/path");
     free(j5);
@@ -140,14 +124,11 @@ TEST(path_manipulation, normalize_dots_and_slashes) {
     free(n5);
 }
 
-// ==============================================================================
-// SUITE: Relationships (Descendant & Relative)
-// ==============================================================================
 
 TEST(path_hierarchy, is_descendant) {
     ASSERT_TRUE(path_is_descendant_of("a/b/c", "a/b"));
     ASSERT_TRUE(path_is_descendant_of("a/b/c", "a"));
-    ASSERT_TRUE(path_is_descendant_of("a/b", "a/b")); // È considerato equivalente/discendente
+    ASSERT_TRUE(path_is_descendant_of("a/b", "a/b"));
 
     ASSERT_FALSE(path_is_descendant_of("a/b", "a/b/c"));
     ASSERT_FALSE(path_is_descendant_of("other/folder", "a/b"));
@@ -167,29 +148,20 @@ TEST(path_hierarchy, relative_to) {
     free(r3);
 }
 
-// ==============================================================================
-// SUITE: System Calls (Absolute & Canonicalize)
-// ==============================================================================
 
 TEST(path_system, absolute_and_canonicalize) {
     char *abs_path = path_to_absolute(".");
     ASSERT_TRUE(abs_path != NULL);
-    ASSERT_TRUE(abs_path[0] == '/' || abs_path[1] == ':'); // Unix root o Windows drive letter
+    ASSERT_TRUE(abs_path[0] == '/' || abs_path[1] == ':');
     free(abs_path);
 
-    // Canonicalize su un path esistente (la directory corrente ".")
     char *real_dir = path_canonicalize(".");
     ASSERT_TRUE(real_dir != NULL);
     free(real_dir);
 
-    // Canonicalize su un file inesistente deve restituire NULL
     char *non_existent = path_canonicalize("this_file_really_does_not_exist_12345.xyz");
     ASSERT_TRUE(non_existent == NULL);
 }
-
-// ==============================================================================
-// MAIN
-// ==============================================================================
 
 int main(void) {
     printf("=== TEST SUITE: libpath.h (via libtest.h) ===\n\n");

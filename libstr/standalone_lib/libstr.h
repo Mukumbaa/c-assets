@@ -220,16 +220,25 @@ LIBSTR_DEF void str_reset(String *str) {
     }
 }
 
-// grow internal buffer to guarantee at least min_capacity bytes
-LIBSTR_DEF bool str_reserve(String *str, size_t min_capacity) {
+bool str_reserve(String *str, size_t space) {
     if (!str) return false;
-    if (str->capacity >= min_capacity) return true;
+    if (space == 0) return true;
 
-    char *new_str = realloc(str->str, min_capacity);
+    if (str->capacity > str->len && (str->capacity - str->len - 1) >= space) {
+        return true;
+    }
+
+    if (SIZE_MAX - str->len - 1 < space) return false;
+    size_t needed_total = str->len + space + 1;
+
+    size_t next_cap = get_next_capacity(str->capacity, needed_total);
+    if (next_cap == 0) return false;
+
+    char *new_str = realloc(str->str, next_cap);
     if (!new_str) return false;
 
     str->str = new_str;
-    str->capacity = min_capacity;
+    str->capacity = next_cap;
     return true;
 }
 

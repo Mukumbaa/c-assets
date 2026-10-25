@@ -120,12 +120,12 @@ Resets the string length to `0`. If the string was never allocated or had its ca
 
 ### 2. Buffer & Capacity Management
 
-#### `bool str_reserve(String *str, size_t min_capacity)`
-Ensures that the internal buffer has at least `min_capacity` bytes available. If `capacity >= min_capacity`, this function is a no-op.
+#### `bool str_reserve(String *str, size_t space)`
+Ensures that the internal buffer has room for at least `space` **additional** characters beyond its current length, plus the null terminator (`capacity >= len + space + 1`). If sufficient unused capacity is already available or `space == 0`, this function is a no-op.
 - **Parameters:** 
   - `str` – Pointer to the target string.
-  - `min_capacity` – Desired minimum buffer capacity.
-- **Returns:** `true` on success, `false` if `realloc` fails or `str` is `NULL`.
+  - `space` – Number of additional characters to guarantee space for.
+- **Returns:** `true` on success, `false` on arithmetic overflow, allocation failure, or if `str` is `NULL`.
 
 #### `bool str_shrink_to_fit(String *str)`
 Releases unused heap memory by downsizing `capacity` to match exactly `len + 1`.

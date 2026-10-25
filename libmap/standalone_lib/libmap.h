@@ -31,20 +31,33 @@ typedef struct{
 
 typedef struct{
   hashmap_entry *he;
-  int count;
-  int capacity;
-  int tombstone;
+  size_t count;
+  size_t capacity;
+  size_t tombstone;
 }hashmap;
 
 LIBMAP_DEF void hashmap_init(hashmap *hm);
+LIBMAP_DEF void hashmap_init_wcapacity(hashmap *hm, size_t capacity);
 LIBMAP_DEF int hashmap_set(hashmap *hm, const char *key, void *value);
+//mettere una macro hashmap_get_type(hashmap *hm, const char *key, type) ???
 LIBMAP_DEF void *hashmap_get(hashmap *hm, const char *key);
+#define hashmap_get_type(hm, key, type) ((type *)hashmap_get((hm), (key)))
+static inline void *hashmap_get_or(hashmap *hm, const char *key, void *default_val) {
+    void *val = hashmap_get(hm, key);
+    return val ? val : default_val;
+}
+#define hashmap_get_or_type(hm, key, type, default_val) \
+    ((type *)hashmap_get_or((hm), (key), (void *)(default_val)))
 LIBMAP_DEF int hashmap_has(hashmap *hm, const char *key);
 LIBMAP_DEF int hashmap_remove(hashmap *hm, const char *key);
 LIBMAP_DEF void hashmap_destroy(hashmap *hm);
 LIBMAP_DEF int hashmap_next(hashmap *hm, int *iter, char **key, void **value);
 typedef void (*hashmap_callback)(const char *key, void *value, void *user_data);
 LIBMAP_DEF void hashmap_foreach(const hashmap *hm, hashmap_callback cb, void *user_data);
+#define hashmap_for_each(hm, it_var, key_var, val_var) \
+    for (int it_var = 0; hashmap_next((hm), &(it_var), (char **)&(key_var), (void **)&(val_var)); )
+#define hashmap_count(hm)    ((hm)->count)
+#define hashmap_is_empty(hm) ((hm)->count == 0)
 #endif
 
 #ifdef LIBMAP_IMPLEMENTATION
@@ -85,6 +98,16 @@ static size_t get_index(uint32_t hash, int capacity){
 
 LIBMAP_DEF void hashmap_init(hashmap *hm){
   hm->capacity = 32;
+  hm->count = 0;
+  hm->tombstone = 0;
+  hm->he = calloc(hm->capacity, sizeof(hashmap_entry));
+}
+
+LIBMAP_DEF void hashmap_init_wcapacity(hashmap *hm, size_t capacity){
+  if(capacity == 0){
+    return;
+  }
+  hm->capacity = capacity;
   hm->count = 0;
   hm->tombstone = 0;
   hm->he = calloc(hm->capacity, sizeof(hashmap_entry));

@@ -38,6 +38,16 @@ extern void hashmap_init(hashmap *hm){
   hm->he = calloc(hm->capacity, sizeof(hashmap_entry));
 }
 
+extern void hashmap_init_wcapacity(hashmap *hm, size_t capacity){
+  if(capacity == 0){
+    return;
+  }
+  hm->capacity = capacity;
+  hm->count = 0;
+  hm->tombstone = 0;
+  hm->he = calloc(hm->capacity, sizeof(hashmap_entry));
+}
+
 extern void hashmap_rehashing(hashmap *hm){
   hashmap_entry *he_old = hm->he;
   int capacity_old = hm->capacity;
