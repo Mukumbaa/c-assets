@@ -340,38 +340,9 @@ static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size)
   }
 }
 
-static void argv_print_single_help(const CliArg *arg) {
-  if (arg->is_positional) {
-    printf("Positional argument:   <%s>\n", arg->name ? arg->name : "arg");
-    printf("Mandatory:             %s\n", arg->required ? "Yes" : "No");
-  } else {
-    printf("Short flag:            %s\n", arg->short_flag[0] ? arg->short_flag : "None");
-    printf("Long flag:             %s\n", arg->long_flag[0]  ? arg->long_flag  : "None");
-    printf("Value required:        %s\n", (arg->type != ARGV_TYPE_BOOL && arg->type != ARGV_TYPE_COUNT) ? "Yes" : "No");
-    printf("Mandatory:             %s\n", arg->required ? "Yes" : "No");
-  }
-  if (arg->env_var) {
-    printf("Environment variable:  %s\n", arg->env_var);
-  }
-  if (arg->choices) {
-    printf("Allowed choices:       [%s]\n", arg->choices);
-    if (arg->choice_help_count > 0) {
-      size_t max_clen = 0;
-      for (size_t c = 0; c < arg->choice_help_count; c++) {
-        size_t l = strlen(arg->choice_helps[c].choice);
-        if (l > max_clen) max_clen = l;
-      }
-      for (size_t c = 0; c < arg->choice_help_count; c++) {
-        printf("  %-*s : %s\n", (int)max_clen, arg->choice_helps[c].choice, arg->choice_helps[c].help);
-      }
-    }
-  }
-  printf("Description:           %s\n", arg->help ? arg->help : "No documentation available.");
-}
-
 static void argv_print_wrapped_desc(const char *left_col, size_t indent, const char *text, size_t desc_width) {
   size_t left_len = left_col ? strlen(left_col) : 0;
-  size_t gutter = 2; // Spazio tra colonna di sinistra e colonna di destra
+  size_t gutter = 2; 
 
   if (left_col && left_len > 0) {
     printf("%s", left_col);
@@ -419,6 +390,42 @@ static void argv_print_wrapped_desc(const char *left_col, size_t indent, const c
   }
   putchar('\n');
 }
+
+static void argv_print_single_help(const CliArg *arg) {
+  size_t desc_width = 50;
+
+  if (arg->is_positional) {
+    printf("%-23s<%s>\n", "Positional argument:", arg->name ? arg->name : "arg");
+    printf("%-23s%s\n", "Mandatory:", arg->required ? "Yes" : "No");
+  } else {
+    printf("%-23s%s\n", "Short flag:", arg->short_flag[0] ? arg->short_flag : "None");
+    printf("%-23s%s\n", "Long flag:", arg->long_flag[0]  ? arg->long_flag  : "None");
+    printf("%-23s%s\n", "Value required:", (arg->type != ARGV_TYPE_BOOL && arg->type != ARGV_TYPE_COUNT) ? "Yes" : "No");
+    printf("%-23s%s\n", "Mandatory:", arg->required ? "Yes" : "No");
+  }
+  if (arg->env_var) {
+    printf("%-23s%s\n", "Environment variable:", arg->env_var);
+  }
+  if (arg->choices) {
+    printf("%-23s[%s]\n", "Allowed choices:", arg->choices);
+    if (arg->choice_help_count > 0) {
+      size_t max_clen = 0;
+      for (size_t c = 0; c < arg->choice_help_count; c++) {
+        size_t l = strlen(arg->choice_helps[c].choice);
+        if (l > max_clen) max_clen = l;
+      }
+      for (size_t c = 0; c < arg->choice_help_count; c++) {
+        char prefix[64];
+        snprintf(prefix, sizeof(prefix), "  %-*s:", (int)max_clen, arg->choice_helps[c].choice);
+        argv_print_wrapped_desc(prefix, strlen(prefix), arg->choice_helps[c].help, desc_width);
+      }
+    }
+  }
+
+  const char *desc = arg->help ? arg->help : "No documentation available.";
+  argv_print_wrapped_desc("Description:", 21, desc, desc_width);
+}
+
 
 extern void argv_print_help(const CliParser *p) {
   if (p == NULL) return;
