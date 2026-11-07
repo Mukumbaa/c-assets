@@ -2,6 +2,8 @@
 #define LIB_ARGV_H
 
 #include <stddef.h>
+#include <stdbool.h>
+
 #define ARGV_INIT_CAPACITY 8
 
 typedef enum {
@@ -38,12 +40,20 @@ typedef struct {
 } CliRule;
 
 typedef struct {
+    const char *choice;
+    const char *help;
+} CliChoiceHelp;
+
+typedef struct {
     const char *name;
     char short_flag[16];
     char long_flag[64];
     const char *help;
     const char *choices;
     const char *env_var;
+    CliChoiceHelp *choice_helps;
+    size_t choice_help_count;
+    size_t choice_help_capacity;
     CliType type;
     void *target;
     size_t *count_target;
@@ -81,6 +91,7 @@ extern void argv_bind_pos(CliParser *p, const char *name, const char **target, b
 extern void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 
 extern void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
+extern bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
 
 extern void argv_add_exclusive(CliParser *p, const char *flags_group);
 extern void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
@@ -88,3 +99,4 @@ extern void argv_add_dependency(CliParser *p, const char *flag, const char *requ
 extern CliStatus argv_parse(CliParser *p, int argc, char **argv);
 extern void argv_print_help(const CliParser *p);
 #endif
+

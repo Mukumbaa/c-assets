@@ -18,6 +18,8 @@
 #define LIB_ARGV_H
 
 #include <stddef.h>
+#include <stdbool.h>
+
 #define ARGV_INIT_CAPACITY 8
 
 typedef enum {
@@ -54,12 +56,20 @@ typedef struct {
 } CliRule;
 
 typedef struct {
+    const char *choice;
+    const char *help;
+} CliChoiceHelp;
+
+typedef struct {
     const char *name;
     char short_flag[16];
     char long_flag[64];
     const char *help;
     const char *choices;
     const char *env_var;
+    CliChoiceHelp *choice_helps;
+    size_t choice_help_count;
+    size_t choice_help_capacity;
     CliType type;
     void *target;
     size_t *count_target;
@@ -97,6 +107,7 @@ LIBARGV_DEF void argv_bind_pos(CliParser *p, const char *name, const char **targ
 LIBARGV_DEF void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 
 LIBARGV_DEF void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
+LIBARGV_DEF bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
 
 LIBARGV_DEF void argv_add_exclusive(CliParser *p, const char *flags_group);
 LIBARGV_DEF void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
@@ -114,6 +125,7 @@ LIBARGV_DEF void argv_print_help(const CliParser *p);
 #include <string.h>
 #include <stdbool.h>
 #include <errno.h>
+
 static const char *argv_basename(const char *path) {
   if (!path) return "program";
   const char *p1 = strrchr(path, '/');
@@ -172,6 +184,10 @@ LIBARGV_DEF void argv_free(CliParser *p) {
           *arr = NULL;
         }
       }
+      if (p->args[i].choice_helps != NULL) {
+        free(p->args[i].choice_helps);
+        p->args[i].choice_helps = NULL;
+      }
     }
     free(p->args);
     p->args = NULL;
@@ -220,6 +236,9 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
   arg->required = required;
   arg->is_positional = is_pos;
   arg->choices = choices;
+  arg->choice_helps = NULL;
+  arg->choice_help_count = 0;
+  arg->choice_help_capacity = 0;
   arg->env_var = NULL;
   arg->is_set = false;
   arg->help = help;
@@ -259,7 +278,6 @@ LIBARGV_DEF void argv_bind_rest(CliParser *p, const char *name, const char ***ta
   argv_add_arg_internal(p, name, NULL, NULL, ARGV_TYPE_REST, (void *)target, count, required, true, choices, help);
 }
 
-// Cerca l'argomento per nome o per flag (con o senza '-' e '--')
 static CliArg *argv_find_arg(CliParser *p, const char *ident) {
   if (!p || !ident) return NULL;
   while (*ident == ' ') ident++;
@@ -285,6 +303,74 @@ LIBARGV_DEF void argv_set_env(CliParser *p, const char *flag_or_name, const char
   if (arg) {
     arg->env_var = env_var;
   }
+}
+
+static bool argv_choice_exists_in_list(const CliArg *arg, const char *choice) {
+  if (!arg || !arg->choices || !choice) return false;
+
+  if (arg->type == ARGV_TYPE_CHAR && strchr(arg->choices, ',') == NULL && strchr(arg->choices, '|') == NULL) {
+    if (choice[0] == '\0' || choice[1] != '\0') return false;
+    return strchr(arg->choices, choice[0]) != NULL;
+  }
+
+  const char *p = arg->choices;
+  while (*p) {
+    while (*p == ' ' || *p == ',' || *p == '|') p++;
+    if (!*p) break;
+
+    const char *start = p;
+    while (*p && *p != ',' && *p != '|' && *p != ' ') p++;
+    size_t token_len = (size_t)(p - start);
+
+    if (token_len == strlen(choice) && strncmp(start, choice, token_len) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+LIBARGV_DEF bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help) {
+  if (!p || !flag_or_name || !choice || !help) return false;
+
+  CliArg *arg = argv_find_arg(p, flag_or_name);
+  if (!arg) {
+    snprintf(p->error, sizeof(p->error), "Argument '%s' not found for choice help", flag_or_name);
+    return false;
+  }
+
+  if (!arg->choices) {
+    snprintf(p->error, sizeof(p->error), "Argument '%s' has no choices defined", flag_or_name);
+    return false;
+  }
+
+  if (!argv_choice_exists_in_list(arg, choice)) {
+    snprintf(p->error, sizeof(p->error), "Choice '%s' is not valid for argument '%s' (allowed: [%s])",
+             choice, flag_or_name, arg->choices);
+    return false;
+  }
+
+  for (size_t i = 0; i < arg->choice_help_count; i++) {
+    if (strcmp(arg->choice_helps[i].choice, choice) == 0) {
+      arg->choice_helps[i].help = help;
+      return true;
+    }
+  }
+
+  if (arg->choice_help_count >= arg->choice_help_capacity) {
+    size_t new_cap = (arg->choice_help_capacity == 0) ? 4 : arg->choice_help_capacity * 2;
+    CliChoiceHelp *new_helps = (CliChoiceHelp *)realloc(arg->choice_helps, new_cap * sizeof(CliChoiceHelp));
+    if (!new_helps) {
+      snprintf(p->error, sizeof(p->error), "Memory allocation failed");
+      return false;
+    }
+    arg->choice_helps = new_helps;
+    arg->choice_help_capacity = new_cap;
+  }
+
+  arg->choice_helps[arg->choice_help_count].choice = choice;
+  arg->choice_helps[arg->choice_help_count].help = help;
+  arg->choice_help_count++;
+  return true;
 }
 
 static bool argv_add_rule_internal(CliParser *p, CliRuleType type, const char *target, const char *requires) {
@@ -390,6 +476,16 @@ static void argv_print_single_help(const CliArg *arg) {
   }
   if (arg->choices) {
     printf("Allowed choices:       [%s]\n", arg->choices);
+    if (arg->choice_help_count > 0) {
+      size_t max_clen = 0;
+      for (size_t c = 0; c < arg->choice_help_count; c++) {
+        size_t l = strlen(arg->choice_helps[c].choice);
+        if (l > max_clen) max_clen = l;
+      }
+      for (size_t c = 0; c < arg->choice_help_count; c++) {
+        printf("  %-*s : %s\n", (int)max_clen, arg->choice_helps[c].choice, arg->choice_helps[c].help);
+      }
+    }
   }
   printf("Description:           %s\n", arg->help ? arg->help : "No documentation available.");
 }
@@ -461,6 +557,12 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
         arg->help ? arg->help : "", 
         arg->required ? " [required]" : "",
         env_buf);
+
+    if (arg->choice_help_count > 0) {
+      for (size_t c = 0; c < arg->choice_help_count; c++) {
+        printf("%*s  %s: %s\n", (int)max_len, "", arg->choice_helps[c].choice, arg->choice_helps[c].help);
+      }
+    }
   }
 
   bool has_pos = false;
@@ -487,6 +589,12 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
           arg->help ? arg->help : "", 
           arg->required ? " [required]" : "",
           env_buf);
+
+      if (arg->choice_help_count > 0) {
+        for (size_t c = 0; c < arg->choice_help_count; c++) {
+          printf("%*s  %s: %s\n", (int)max_len, "", arg->choice_helps[c].choice, arg->choice_helps[c].help);
+        }
+      }
     }
   }
 }
@@ -566,7 +674,10 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, char **argv) {
     if (p) snprintf(p->error, sizeof(p->error), "Invalid arguments to argv_parse");
     return ARGV_ERR_INVALID_VALUE;
   }
-  p->error[0] = '\0';
+
+  if (p->error[0] != '\0') {
+    return ARGV_ERR_INVALID_VALUE;
+  }
 
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
@@ -705,7 +816,6 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, char **argv) {
     }
   }
 
-  // fallback: environment variables
   for (size_t i = 0; i < p->count; i++) {
     CliArg *arg = &p->args[i];
     if (!arg->is_set && arg->env_var != NULL) {
@@ -733,7 +843,6 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, char **argv) {
     }
   }
 
-  // multi exclusive and dependency
   for (size_t r = 0; r < p->rule_count; r++) {
     CliRule *rule = &p->rules[r];
 
@@ -799,7 +908,6 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, char **argv) {
     }
   }
 
-  // required arguments check
   for (size_t i = 0; i < p->count; i++) {
     if (p->args[i].required && !p->args[i].is_set) {
       if (p->args[i].is_positional) {
