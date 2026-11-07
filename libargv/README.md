@@ -13,11 +13,14 @@ Most C argument parsers fall into two camps: either they wrap raw POSIX `getopt`
 `libargv` aims for the middle ground:
 - **Single-header (STB-style)**: Put `libargv.h` in your project and you are done.
 - **Direct variable binding**: Point the parser to your `bool`, `char`, `int`, `double`, or `char*` and it handles validation and assignment.
+- **Flag normalization**: Pass `"v"` and `"verbose"` or `"-v"` and `"--verbose"`—the parser automatically normalizes prefixes for you.
+- **Environment variable fallback**: Seamlessly read missing values from environment variables (`argv_set_env`).
+- **Advanced logical rules**: Enforce group-based mutual exclusion (e.g. `"json,xml,ini"`) and multi-flag dependencies (e.g. `--pass` requiring both `--user` and `--mail`).
 - **Choices validation**: Restrict strings, characters, and numbers to a predefined set of allowed values (e.g. `"json,xml,yaml"`).
-- **Variadic positional arguments**: Collect remaining trailing arguments (`argv_bind_rest`) into a dynamically allocated array.
+- **Variadic positional arguments**: Collect remaining trailing arguments (`argv_bind_rest`) into a dynamically managed array.
 - **Modern syntax out of the box**: Supports short flag stacking (`-xvf`), inline assignments (`--port=8080`), attached short values (`-I/usr/include`), negative numbers (`--offset -10`), and the standard `--` positional delimiter.
 - **Clean error handling**: It never writes to `stderr` without your permission. It records what went wrong and lets your application decide how to format or log errors.
-- **Auto-generated help**: Dynamic column alignment, choices preview, and automated per-flag inspection.
+- **Auto-generated help**: Dynamic column alignment, choices preview, environment variable hints, and automated per-flag inspection.
 
 ---
 
@@ -52,11 +55,12 @@ In any other file where you need to call parser functions, just include it norma
 int main(int argc, char **argv) {
     // Declare your variables with sensible defaults
     bool verbose = false;
-    int verbosity_level = 0;
-    char mode = 'r';
+    bool json_fmt = false;
+    bool xml_fmt = false;
+    bool ini_fmt = false;
     int port = 8080;
-    double timeout = 15.5;
-    const char *format = "json";
+    const char *user = NULL;
+    const char *pass = NULL;
     const char *input_file = NULL;
     const char **extra_files = NULL;
     size_t extra_count = 0;
@@ -65,17 +69,28 @@ int main(int argc, char **argv) {
     CliParser parser;
     argv_init(&parser, argv[0]);
 
-    // Bind flags to variables
-    argv_bind_bool(&parser, "-v", "--verbose", &verbose, "Turn on debug logs");
-    argv_bind_count(&parser, "-l", "--log-level", &verbosity_level, "Repeat for higher verbosity (-l, -ll)");
-    argv_bind_char(&parser, "-m", "--mode", &mode, false, "rwa", "File open mode (r, w, or a)");
-    argv_bind_int(&parser, "-p", "--port", &port, false, "80,443,8080", "Port to listen on");
-    argv_bind_float(&parser, "-t", "--timeout", &timeout, false, NULL, "Connection timeout in seconds");
-    argv_bind_str(&parser, "-f", "--format", &format, false, "json|xml|csv", "Output format");
+    // Bind flags: prefixes ('-' and '--') are completely optional!
+    argv_bind_bool(&parser, "v", "verbose", &verbose, "Turn on debug logs");
+    argv_bind_bool(&parser, "j", "json", &json_fmt, "Output as JSON");
+    argv_bind_bool(&parser, "x", "xml",  &xml_fmt,  "Output as XML");
+    argv_bind_bool(&parser, "i", "ini",  &ini_fmt,  "Output as INI");
+
+    argv_bind_int(&parser, "p", "port", &port, false, NULL, "Server listen port");
+    argv_bind_str(&parser, "u", "user", &user, false, NULL, "Admin username");
+    argv_bind_str(&parser, NULL, "pass", &pass, false, NULL, "Admin password");
 
     // Positional arguments (ordered)
     argv_bind_pos(&parser, "input", &input_file, true, NULL, "Primary input file");
-    argv_bind_rest(&parser, "extras", &extra_files, &extra_count, false, NULL, "Additional files to process");
+    argv_bind_rest(&parser, "extras", &extra_files, &extra_count, false, NULL, "Additional files");
+
+    // 1. Environment fallback: if --port is not supplied, look up $PORT
+    argv_set_env(&parser, "port", "PORT");
+
+    // 2. Group mutual exclusion: only one output format allowed
+    argv_add_exclusive(&parser, "json,xml,ini");
+
+    // 3. Multi-flag dependency: --pass requires --user to be set
+    argv_add_dependency(&parser, "pass", "user");
 
     // Parse argv
     CliStatus status = argv_parse(&parser, argc, argv);
@@ -92,15 +107,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    // Use your values directly
-    printf("Starting on port %d [format: %s, mode: %c] with primary file: %s\n",
-           port, format, mode, input_file);
+    printf("Server running on port %d (user: %s, file: %s)\n",
+           port, user ? user : "anonymous", input_file);
 
     for (size_t i = 0; i < extra_count; i++) {
         printf(" - Extra file #%zu: %s\n", i + 1, extra_files[i]);
     }
 
-    // Clean up internal parser allocations (also frees rest argument buffers)
+    // Clean up internal parser allocations
     argv_free(&parser);
     return 0;
 }
@@ -118,13 +132,17 @@ gcc -Wall -Wextra main.c -o main
 
 | Syntax | Example | Description |
 |---|---|---|
+| **No-dash registration** | `argv_bind_bool(p, "v", "verbose", ...)` | Registrations accept flag names with or without leading hyphens. |
 | **Standard flags** | `-f json`, `--format json` | Traditional space-separated options. |
 | **Inline values** | `--format=json` | Key-value style long flags. |
 | **Short clusters** | `-vxl` | Equivalent to passing `-v -x -l` separately. |
-| **Attached short values** | `-I/usr/include`, `-mc` | Value immediately following the short option. |
-| **Counters** | `-l`, `-ll`, `-lll` | Increments an `int` counter each time it is encountered. |
+| **Attached short values** | `-I/usr/include`, `-p8080` | Value immediately following the short option. |
+| **Counters** | `-v`, `-vv`, `-vvv` | Increments an `int` counter each time it is encountered. |
 | **Negative numbers** | `--offset -12`, `-t -0.5` | Won't mistake negative numbers for unrecognized flags. |
 | **Value choices** | `--format yaml` *(rejected)* | Automatically checks input against comma- or pipe-delimited choices. |
+| **Environment fallback** | `PORT=9000 ./app` | Automatically parses fallback environment variables when flags are omitted. |
+| **Exclusive groups** | `--json --xml` *(rejected)* | Forbids using conflicting options defined in an exclusive group. |
+| **Flag dependencies** | `--pass 123` *(without `--user`)* | Enforces prerequisite options before a dependent flag can be set. |
 | **Variadic pos args** | `input.txt a.c b.c c.c` | Rest arguments captured into `const char**`. |
 | **Double-dash `--`** | `-- -weird-filename.txt` | Treats everything following `--` as a positional argument. |
 
@@ -142,7 +160,7 @@ Prepares the parser instance and allocates initial storage. Pass `argv[0]` as `p
 ```c
 void argv_free(CliParser *p);
 ```
-Frees dynamic memory allocated by the parser, including any array memory allocated for `argv_bind_rest`. Always call this before exiting.
+Frees dynamic memory allocated by the parser, including rules and dynamic array memory from `argv_bind_rest`. Always call this before exiting.
 
 ```c
 const char *argv_get_error(const CliParser *p);
@@ -158,7 +176,9 @@ Manually prints the generated usage and options screen.
 
 ### Binding Options
 
-Options can be marked `required` and constrained by `choices`. Set `choices` to `NULL` to disable value restriction. Choices can be separated by commas (`,`)|pipes (`|`), or compact characters (e.g. `"abc"` for `char` types).
+Options can be registered with or without leading dashes (`"v"` or `"-v"`, `"verbose"` or `"--verbose"`). 
+
+Set `choices` to `NULL` to disable value restriction. Choices can be separated by commas (`,`), pipes (`|`), or compact characters (e.g. `"abc"` for `char` types).
 
 #### Boolean & Counters
 ```c
@@ -174,15 +194,11 @@ Flags that increment an integer every time they appear (e.g. `-v`, `-vv`).
 #### Typed Options
 ```c
 void argv_bind_char(CliParser *p, const char *sh, const char *lng, char *target, bool required, const char *choices, const char *help);
-```
-Parses a single ASCII character. Rejects input strings longer than 1 character.
-
-```c
 void argv_bind_int(CliParser *p, const char *sh, const char *lng, int *target, bool required, const char *choices, const char *help);
 void argv_bind_float(CliParser *p, const char *sh, const char *lng, double *target, bool required, const char *choices, const char *help);
 void argv_bind_str(CliParser *p, const char *sh, const char *lng, const char **target, bool required, const char *choices, const char *help);
 ```
-Parses integers (via `strtol`), floats (via `strtod`), or direct string pointers (`const char*` pointing into `argv`). If `choices` is provided, values outside the set will return `ARGV_ERR_INVALID_VALUE`.
+Parses characters, integers (via `strtol`), floats (via `strtod`), or direct string pointers (`const char*` pointing into `argv`). If `choices` is provided, values outside the set will return `ARGV_ERR_INVALID_VALUE`.
 
 #### Positional and Rest Arguments
 ```c
@@ -194,6 +210,25 @@ Registers an ordered positional argument. Positional arguments are resolved in t
 void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 ```
 Captures all remaining positional arguments into a dynamically allocated array `const char **`. The total number of captured elements is stored in `*count`. The allocated array is automatically cleaned up when `argv_free(p)` is called.
+
+---
+
+### Environment Variables & Advanced Rules
+
+```c
+void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
+```
+Associates an environment variable name as a fallback for any flag or positional argument. If the option is not provided on the command line, the value of `getenv(env_var)` is parsed and validated instead.
+
+```c
+void argv_add_exclusive(CliParser *p, const char *flags_group);
+```
+Defines a mutually exclusive group using a comma- or pipe-separated list of flags (e.g. `"json,xml,ini"`). If more than one flag from this group is set, parsing fails with `ARGV_ERR_MUTUAL_EXCLUSION`.
+
+```c
+void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
+```
+Requires one or more prerequisite flags (comma- or pipe-separated, e.g. `"user,mail"`) whenever `flag` is specified. If any prerequisite is missing, parsing fails with `ARGV_ERR_DEPENDENCY`.
 
 ---
 
@@ -211,6 +246,8 @@ Returns one of the following `CliStatus` values:
 - `ARGV_ERR_MISSING_VALUE`: A flag expecting a value was left empty.
 - `ARGV_ERR_INVALID_VALUE`: Failed conversion (e.g. invalid integer/float/char) or value violated `choices`.
 - `ARGV_ERR_MISSING_REQUIRED`: An option or positional argument marked `required` was not found.
+- `ARGV_ERR_MUTUAL_EXCLUSION`: Multiple options from an exclusive group were passed together.
+- `ARGV_ERR_DEPENDENCY`: A flag was provided without satisfying all prerequisite flags.
 - `ARGV_ERR_ALLOC`: Internal memory allocation failed.
 
 ---
@@ -219,5 +256,20 @@ Returns one of the following `CliStatus` values:
 
 `libargv` hooks into `-h` and `--help` automatically:
 
-1. **General help**: Running `./mytool --help` lists the usage line, all options aligned dynamically with choices/type hints, and registered positional arguments.
-2. **Flag inspection**: Running `./mytool --help --port` (or `./mytool -p -h`) displays detailed documentation, mandatory status, choices, and requirements specifically for that option.
+1. **General help**: Running `./mytool --help` lists the usage line, registered options with auto-detected hints, allowed choices, and environment variable bindings (`[env: NAME]`):
+   ```text
+   Options:
+     -h, --help           Display this help message
+     -p, --port <int>     Server listen port [env: PORT]
+     -j, --json           Output as JSON
+     -x, --xml            Output as XML
+   ```
+2. **Flag inspection**: Running `./mytool --help port` (or `./mytool -p -h`) displays full details for that option, including allowed choices, mandatory state, and associated environment variables:
+   ```text
+   Short flag:            -p
+   Long flag:             --port
+   Value required:        Yes
+   Mandatory:             No
+   Environment variable:  PORT
+   Description:           Server listen port
+   ```

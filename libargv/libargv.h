@@ -1,15 +1,9 @@
 #ifndef LIB_ARGV_H
 #define LIB_ARGV_H
 
-// standard types and basic io
-#include <stdbool.h>
 #include <stddef.h>
-#include <stdio.h>
-
-// initial capacity for the dynamic arguments array
 #define ARGV_INIT_CAPACITY 8
 
-// supported argument data types
 typedef enum {
     ARGV_TYPE_BOOL,
     ARGV_TYPE_COUNT,
@@ -20,7 +14,6 @@ typedef enum {
     ARGV_TYPE_REST,
 } CliType;
 
-// return codes for cli parsing operations
 typedef enum {
     ARGV_OK = 0,
     ARGV_HELP_REQUESTED,
@@ -28,17 +21,29 @@ typedef enum {
     ARGV_ERR_MISSING_VALUE,
     ARGV_ERR_INVALID_VALUE,
     ARGV_ERR_MISSING_REQUIRED,
+    ARGV_ERR_MUTUAL_EXCLUSION,
+    ARGV_ERR_DEPENDENCY,
     ARGV_ERR_ALLOC,
 } CliStatus;
 
-// metadata and storage pointer for a single cli argument
+typedef enum {
+    ARGV_RULE_EXCLUSIVE,
+    ARGV_RULE_DEPENDENCY
+} CliRuleType;
+
+typedef struct {
+    CliRuleType type;
+    const char *target;
+    const char *requires;
+} CliRule;
+
 typedef struct {
     const char *name;
-    const char *short_flag;
-    const char *long_flag;
+    char short_flag[16];
+    char long_flag[64];
     const char *help;
-    // allowed values separated by comma or pipe (e.g. "json,xml,csv"), or null
     const char *choices;
+    const char *env_var;
     CliType type;
     void *target;
     size_t *count_target;
@@ -48,34 +53,38 @@ typedef struct {
     bool is_set;
 } CliArg;
 
-// top-level parser state
 typedef struct {
     const char *program_name;
     CliArg *args;
     size_t count;
     size_t capacity;
+
+    CliRule *rules;
+    size_t rule_count;
+    size_t rule_capacity;
+
     char error[256];
 } CliParser;
 
-// parser lifecycle management
 extern void argv_init(CliParser *p, const char *program_name);
 extern void argv_free(CliParser *p);
 extern const char *argv_get_error(const CliParser *p);
 
-// registration helpers for options and flags
 extern void argv_bind_bool(CliParser *p, const char *sh, const char *lng, bool *target, const char *help);
 extern void argv_bind_count(CliParser *p, const char *sh, const char *lng, int *target, const char *help);
 extern void argv_bind_char(CliParser *p, const char *sh, const char *lng, char *target, bool required, const char *choices, const char *help);
 extern void argv_bind_str(CliParser *p, const char *sh, const char *lng, const char **target, bool required, const char *choices, const char *help);
 extern void argv_bind_int(CliParser *p, const char *sh, const char *lng, int *target, bool required, const char *choices, const char *help);
 extern void argv_bind_float(CliParser *p, const char *sh, const char *lng, double *target, bool required, const char *choices, const char *help);
-// register a positional argument
+
 extern void argv_bind_pos(CliParser *p, const char *name, const char **target, bool required, const char *choices, const char *help);
 extern void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 
-// main parsing entry point and help display
+extern void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
+
+extern void argv_add_exclusive(CliParser *p, const char *flags_group);
+extern void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
+
 extern CliStatus argv_parse(CliParser *p, int argc, char **argv);
 extern void argv_print_help(const CliParser *p);
-
-// header guard end
 #endif
