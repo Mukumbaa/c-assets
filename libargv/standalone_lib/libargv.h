@@ -461,9 +461,8 @@ static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size)
   }
 }
 
-static void argv_print_wrapped_desc(const char *left_col, size_t indent, const char *text, size_t desc_width) {
+static void argv_print_wrapped_desc(const char *left_col, size_t indent, size_t gutter, const char *text, size_t desc_width) {
   size_t left_len = left_col ? strlen(left_col) : 0;
-  size_t gutter = 2; 
 
   if (left_col && left_len > 0) {
     printf("%s", left_col);
@@ -538,13 +537,13 @@ static void argv_print_single_help(const CliArg *arg) {
       for (size_t c = 0; c < arg->choice_help_count; c++) {
         char prefix[64];
         snprintf(prefix, sizeof(prefix), "  %-*s:", (int)max_clen, arg->choice_helps[c].choice);
-        argv_print_wrapped_desc(prefix, strlen(prefix), arg->choice_helps[c].help, desc_width);
+        argv_print_wrapped_desc(prefix, strlen(prefix),1, arg->choice_helps[c].help, desc_width);
       }
     }
   }
 
   const char *desc = arg->help ? arg->help : "No documentation available.";
-  argv_print_wrapped_desc("Description:", 21, desc, desc_width);
+  argv_print_wrapped_desc("Description:", 21,2, desc, desc_width);
 }
 
 
@@ -591,7 +590,7 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
   }
 
   printf("Options:\n");
-  argv_print_wrapped_desc("  -h, --help", max_len, "Display this help message", desc_width);
+  argv_print_wrapped_desc("  -h, --help", max_len,2, "Display this help message", desc_width);
 
   for (size_t i = 0; i < p->count; i++) {
     const CliArg *arg = &p->args[i];
@@ -620,14 +619,14 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
              arg->required ? " [required]" : "",
              env_buf);
 
-    argv_print_wrapped_desc(buf, max_len, full_desc, desc_width);
+    argv_print_wrapped_desc(buf, max_len,2, full_desc, desc_width);
 
     if (arg->choice_help_count > 0) {
       for (size_t c = 0; c < arg->choice_help_count; c++) {
         char left[128];
         snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
         size_t c_indent = strlen(left);
-        argv_print_wrapped_desc(left, c_indent, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
+        argv_print_wrapped_desc(left, c_indent,1, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
       }
     }
   }
@@ -658,14 +657,14 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
                arg->required ? " [required]" : "",
                env_buf);
 
-      argv_print_wrapped_desc(buf, max_len, full_desc, desc_width);
+      argv_print_wrapped_desc(buf, max_len,2, full_desc, desc_width);
 
       if (arg->choice_help_count > 0) {
         for (size_t c = 0; c < arg->choice_help_count; c++) {
           char left[128];
           snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
           size_t c_indent = strlen(left);
-          argv_print_wrapped_desc(left, c_indent, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
+          argv_print_wrapped_desc(left, c_indent, 1, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
         }
       }
     }
