@@ -490,8 +490,61 @@ static void argv_print_single_help(const CliArg *arg) {
   printf("Description:           %s\n", arg->help ? arg->help : "No documentation available.");
 }
 
+static void argv_print_wrapped_desc(const char *left_col, size_t indent, const char *text, size_t desc_width) {
+  size_t left_len = left_col ? strlen(left_col) : 0;
+  size_t gutter = 2; // Spazio tra colonna di sinistra e colonna di destra
+
+  if (left_col && left_len > 0) {
+    printf("%s", left_col);
+    if (left_len < indent) {
+      printf("%*s", (int)(indent - left_len + gutter), "");
+    } else {
+      printf("%*s", (int)gutter, "");
+    }
+  } else {
+    printf("%*s", (int)(indent + gutter), "");
+  }
+
+  if (!text || text[0] == '\0') {
+    putchar('\n');
+    return;
+  }
+
+  size_t cont_indent = (left_len < indent) ? (indent + gutter) : (left_len + gutter);
+  const char *p = text;
+  size_t line_len = 0;
+  bool first_word = true;
+
+  while (*p) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+
+    const char *start = p;
+    while (*p && *p != ' ') p++;
+    size_t wlen = (size_t)(p - start);
+
+    size_t needed = first_word ? wlen : (1 + wlen);
+    if (!first_word && (line_len + needed > desc_width)) {
+      printf("\n%*s", (int)cont_indent, "");
+      line_len = 0;
+      first_word = true;
+    }
+
+    if (!first_word) {
+      putchar(' ');
+      line_len++;
+    }
+    printf("%.*s", (int)wlen, start);
+    line_len += wlen;
+    first_word = false;
+  }
+  putchar('\n');
+}
+
 LIBARGV_DEF void argv_print_help(const CliParser *p) {
   if (p == NULL) return;
+
+  size_t desc_width = 50;
 
   printf("Usage: %s [OPTIONS]", argv_basename(p->program_name));
 
@@ -531,7 +584,8 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
   }
 
   printf("Options:\n");
-  printf("  -h, --help%-*s Display this help message\n", (int)(max_len > 10 ? max_len - 12 : 2), "");
+  argv_print_wrapped_desc("  -h, --help", max_len, "Display this help message", desc_width);
+
   for (size_t i = 0; i < p->count; i++) {
     const CliArg *arg = &p->args[i];
     if (arg->is_positional) continue;
@@ -553,14 +607,20 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
       snprintf(env_buf, sizeof(env_buf), " [env: %s]", arg->env_var);
     }
 
-    printf("%-*s %s%s%s\n", (int)max_len, buf, 
-        arg->help ? arg->help : "", 
-        arg->required ? " [required]" : "",
-        env_buf);
+    char full_desc[512] = {0};
+    snprintf(full_desc, sizeof(full_desc), "%s%s%s",
+             arg->help ? arg->help : "",
+             arg->required ? " [required]" : "",
+             env_buf);
+
+    argv_print_wrapped_desc(buf, max_len, full_desc, desc_width);
 
     if (arg->choice_help_count > 0) {
       for (size_t c = 0; c < arg->choice_help_count; c++) {
-        printf("%*s  %s: %s\n", (int)max_len, "", arg->choice_helps[c].choice, arg->choice_helps[c].help);
+        char left[128];
+        snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
+        size_t c_indent = strlen(left);
+        argv_print_wrapped_desc(left, c_indent, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
       }
     }
   }
@@ -585,14 +645,20 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
       char env_buf[64] = {0};
       if (arg->env_var) snprintf(env_buf, sizeof(env_buf), " [env: %s]", arg->env_var);
 
-      printf("%-*s %s%s%s\n", (int)max_len, buf, 
-          arg->help ? arg->help : "", 
-          arg->required ? " [required]" : "",
-          env_buf);
+      char full_desc[512] = {0};
+      snprintf(full_desc, sizeof(full_desc), "%s%s%s",
+               arg->help ? arg->help : "",
+               arg->required ? " [required]" : "",
+               env_buf);
+
+      argv_print_wrapped_desc(buf, max_len, full_desc, desc_width);
 
       if (arg->choice_help_count > 0) {
         for (size_t c = 0; c < arg->choice_help_count; c++) {
-          printf("%*s  %s: %s\n", (int)max_len, "", arg->choice_helps[c].choice, arg->choice_helps[c].help);
+          char left[128];
+          snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
+          size_t c_indent = strlen(left);
+          argv_print_wrapped_desc(left, c_indent, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
         }
       }
     }
