@@ -527,7 +527,8 @@ static void argv_print_single_help(const CliArg *arg) {
     printf("%-23s%s\n", "Environment variable:", arg->env_var);
   }
   if (arg->choices) {
-    printf("%-23s[%s]\n", "Allowed choices:", arg->choices);
+    printf("Allowed choices:\n");
+    // printf("%-23s[%s]\n", "Allowed choices:", arg->choices);
     if (arg->choice_help_count > 0) {
       size_t max_clen = 0;
       for (size_t c = 0; c < arg->choice_help_count; c++) {
@@ -542,8 +543,11 @@ static void argv_print_single_help(const CliArg *arg) {
     }
   }
 
+  // const char *desc = arg->help ? arg->help : "No documentation available.";
+  // argv_print_wrapped_desc("Description:", 21,2, desc, desc_width);
+  printf("\nDescription:\n");
   const char *desc = arg->help ? arg->help : "No documentation available.";
-  argv_print_wrapped_desc("Description:", 21,2, desc, desc_width);
+  argv_print_wrapped_desc("", 2, 0, desc, desc_width);
 }
 
 
