@@ -252,7 +252,23 @@ static void argv_format_default_value(const CliArg *arg, char *out, size_t out_s
 
   if (arg->type == ARGV_TYPE_STR) {
     const char *s = *(const char **)arg->target;
-    if (s && s[0]) snprintf(out, out_sz, " [default: %s]", s);
+    if (s && s[0]) {
+      char clean[64];
+      size_t ci = 0;
+      for (size_t i = 0; s[i] && ci < sizeof(clean) - 2; i++) {
+        if (s[i] == '\n') {
+          clean[ci++] = '\\';
+          clean[ci++] = 'n';
+        } else if (s[i] == '\t') {
+          clean[ci++] = '\\';
+          clean[ci++] = 't';
+        } else {
+          clean[ci++] = s[i];
+        }
+      }
+      clean[ci] = '\0';
+      snprintf(out, out_sz, " [default: %s]", clean);
+    }
   } else if (arg->type == ARGV_TYPE_INT) {
     int v = *(int *)arg->target;
     if (v != 0) snprintf(out, out_sz, " [default: %d]", v);
@@ -261,7 +277,7 @@ static void argv_format_default_value(const CliArg *arg, char *out, size_t out_s
     if (v != 0.0) snprintf(out, out_sz, " [default: %g]", v);
   } else if (arg->type == ARGV_TYPE_CHAR) {
     char c = *(char *)arg->target;
-    if (c != '\0') snprintf(out, out_sz, " [default: %c]", c);
+    if (c > 32 && c <= 126) snprintf(out, out_sz, " [default: %c]", c);
   } else if (arg->type == ARGV_TYPE_BOOL) {
     bool c = *(bool *)arg->target;
     if (c) {
@@ -671,10 +687,12 @@ static void argv_format_long_display(const CliArg *arg, char *out, size_t out_sz
     return;
   }
   if (arg->type == ARGV_TYPE_BOOL && strncmp(arg->long_flag, "--", 2) == 0 && strncmp(arg->long_flag, "--no-", 5) != 0) {
-    snprintf(out, out_sz, "--[no-]%s", arg->long_flag + 2);
-  } else {
-    snprintf(out, out_sz, "%s", arg->long_flag);
+    if (arg->target && *(bool *)arg->target) {
+      snprintf(out, out_sz, "--[no-]%s", arg->long_flag + 2);
+      return;
+    }
   }
+  snprintf(out, out_sz, "%s", arg->long_flag);
 }
 
 static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
@@ -694,7 +712,7 @@ static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
   } else {
     char long_disp[128] = "None";
     if (arg->long_flag[0] != '\0') {
-      if (arg->type == ARGV_TYPE_BOOL && strncmp(arg->long_flag, "--", 2) == 0 && strncmp(arg->long_flag, "--no-", 5) != 0) {
+      if (arg->type == ARGV_TYPE_BOOL && strncmp(arg->long_flag, "--", 2) == 0 && strncmp(arg->long_flag, "--no-", 5) != 0 && arg->target && *(bool *)arg->target) {
         snprintf(long_disp, sizeof(long_disp), "%s (negation: --no-%s)", arg->long_flag, arg->long_flag + 2);
       } else {
         snprintf(long_disp, sizeof(long_disp), "%s", arg->long_flag);
