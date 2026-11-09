@@ -613,9 +613,27 @@ static bool argv_check_choice(const CliArg *arg, const char *val_str) {
   return false;
 }
 
+static size_t argv_count_choices(const CliArg *arg) {
+  if (!arg || !arg->choices || arg->choices[0] == '\0') return 0;
+
+  if (arg->type == ARGV_TYPE_CHAR && strchr(arg->choices, ',') == NULL && strchr(arg->choices, '|') == NULL) {
+    return strlen(arg->choices);
+  }
+
+  size_t count = 0;
+  const char *p = arg->choices;
+  while (*p) {
+    while (*p == ' ' || *p == ',' || *p == '|') p++;
+    if (!*p) break;
+    count++;
+    while (*p && *p != ',' && *p != '|' && *p != ' ') p++;
+  }
+  return count;
+}
 static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size) {
   if (!arg || !out || out_size == 0) return;
-  if (arg->choices) {
+
+  if (arg->choices && arg->choice_help_count < argv_count_choices(arg)) {
     snprintf(out, out_size, " {%s}", arg->choices);
     return;
   }
