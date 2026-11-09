@@ -42,6 +42,9 @@ static void argv_normalize_long(const char *in, char *out, size_t out_sz) {
 extern void argv_init(CliParser *p, const char *program_name) {
   if (p == NULL) return;
   p->program_name = program_name;
+  p->version = NULL;
+  p->version_short[0] = '\0';
+  p->version_extra = NULL;
   p->count = 0;
   p->capacity = ARGV_INIT_CAPACITY;
   p->rules = NULL;
@@ -79,7 +82,10 @@ extern void argv_free(CliParser *p) {
   p->capacity = 0;
   p->rule_count = 0;
   p->rule_capacity = 0;
-  p->program_name = NULL;
+  p->program_name = NULL; 
+  p->version = NULL;
+  p->version_short[0] = '\0';
+  p->version_extra = NULL;
   p->error[0] = '\0';
 }
 
@@ -435,6 +441,10 @@ extern void argv_print_help(const CliParser *p) {
 
   size_t desc_width = 50;
 
+  if (p->version && p->version[0] != '\0') {
+    printf("%s v%s\n\n", argv_basename(p->program_name), p->version);
+  }
+
   printf("Usage: %s [OPTIONS]", argv_basename(p->program_name));
 
   for (size_t i = 0; i < p->count; i++) {
@@ -474,6 +484,16 @@ extern void argv_print_help(const CliParser *p) {
 
   printf("Options:\n");
   argv_print_wrapped_desc("  -h, --help", max_len,2, "Display this help message", desc_width);
+
+  if (p->version && p->version[0] != '\0') {
+    char v_buf[64] = {0};
+    if (p->version_short[0] != '\0') {
+      snprintf(v_buf, sizeof(v_buf), "  %s, --version", p->version_short);
+    } else {
+      snprintf(v_buf, sizeof(v_buf), "      --version");
+    }
+    argv_print_wrapped_desc(v_buf, max_len, 2, "Display version information", desc_width);
+  }
 
   for (size_t i = 0; i < p->count; i++) {
     const CliArg *arg = &p->args[i];
@@ -641,6 +661,17 @@ extern CliStatus argv_parse(CliParser *p, int argc, char **argv) {
       else if (i > 1 && argv[i - 1][0] != '-') inspect = argv[i - 1];
 
       if (inspect) {
+        if (p->version && p->version[0] != '\0' &&
+            (strcmp(inspect, "version") == 0 || strcmp(inspect, "--version") == 0 ||
+             (p->version_short[0] != '\0' && (strcmp(inspect, p->version_short) == 0 || strcmp(inspect, p->version_short + 1) == 0)))) {
+          printf("%-23s%s\n", "Short flag:", p->version_short[0] ? p->version_short : "None");
+          printf("%-23s%s\n", "Long flag:", "--version");
+          printf("%-23s%s\n", "Value required:", "No");
+          printf("%-23s%s\n", "Mandatory:", "No");
+          printf("\nDescription:\n");
+          argv_print_wrapped_desc("", 2, 0, "Display version information", 50);
+          return ARGV_HELP_REQUESTED;
+        }
         CliArg *found = argv_find_arg(p, inspect);
         if (found) argv_print_single_help(found);
         else {
@@ -651,6 +682,22 @@ extern CliStatus argv_parse(CliParser *p, int argc, char **argv) {
         argv_print_help(p);
       }
       return ARGV_HELP_REQUESTED;
+    }
+  }
+
+  if (p->version && p->version[0] != '\0') {
+    for (int i = 1; i < argc; i++) {
+      bool is_ver = (strcmp(argv[i], "--version") == 0);
+      if (!is_ver && p->version_short[0] != '\0' && strcmp(argv[i], p->version_short) == 0) {
+        is_ver = true;
+      }
+      if (is_ver) {
+        printf("%s %s\n", argv_basename(p->program_name), p->version);
+        if (p->version_extra && p->version_extra[0] != '\0') {
+          printf("%s\n", p->version_extra);
+        }
+        return ARGV_VERSION_REQUESTED;
+      }
     }
   }
 
@@ -877,4 +924,13 @@ extern CliStatus argv_parse(CliParser *p, int argc, char **argv) {
 
   return ARGV_OK;
 }
-
+extern void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info) {
+  if (!p) return;
+  p->version = version;
+  p->version_extra = extra_info;
+  if (sh && sh[0] != '\0') {
+    argv_normalize_short(sh, p->version_short, sizeof(p->version_short));
+  } else {
+    p->version_short[0] = '\0';
+  }
+}

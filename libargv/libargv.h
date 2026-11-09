@@ -19,6 +19,7 @@ typedef enum {
 typedef enum {
     ARGV_OK = 0,
     ARGV_HELP_REQUESTED,
+    ARGV_VERSION_REQUESTED,
     ARGV_ERR_UNKNOWN_FLAG,
     ARGV_ERR_MISSING_VALUE,
     ARGV_ERR_INVALID_VALUE,
@@ -64,7 +65,10 @@ typedef struct {
 } CliArg;
 
 typedef struct {
-    const char *program_name;
+    const char *program_name; 
+    const char *version;
+    char version_short[16];
+    const char *version_extra;
     CliArg *args;
     size_t count;
     size_t capacity;
@@ -98,5 +102,6 @@ extern void argv_add_dependency(CliParser *p, const char *flag, const char *requ
 
 extern CliStatus argv_parse(CliParser *p, int argc, char **argv);
 extern void argv_print_help(const CliParser *p);
+extern void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info);
 #endif
 
