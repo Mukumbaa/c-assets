@@ -160,6 +160,136 @@ gcc -Wall -Wextra main.c -o main
 
 ---
 
+## Subcommands (Git-style CLI)
+
+You don't need complicated command hierarchies or external libraries to implement multi-command tools like `git` or `docker`. 
+
+With `libargv`, you can build clean subcommands with **zero dynamic allocations**:
+1. The **root parser** validates the command name against allowed choices and documents them via `argv_set_choice_help`.
+2. A simple `strcmp` dispatcher passes the tail of `argv` directly to a dedicated subcommand parser.
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+
+#define LIBARGV_IMPLEMENTATION
+#include "libargv.h"
+
+static void run_commit(int argc, char **argv);
+static void run_clone(int argc, char **argv);
+
+int main(int argc, char **argv) {
+    const char *cmd = NULL;
+
+    // 1. Root Parser: validates and documents top-level subcommands
+    CliParser root;
+    argv_init(&root, "git");
+    argv_set_version(&root, "2.43.0", "V", "A Git CLI mock in C");
+    argv_bind_pos(&root, "command", &cmd, true, "commit,clone", "Git subcommand to execute");
+    argv_set_choice_help(&root, "command", "commit", "Record changes to the repository");
+    argv_set_choice_help(&root, "command", "clone", "Clone a repository into a new directory");
+
+    // Handle general --help, --version, or missing arguments
+    if (argc < 2 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 ||
+        strcmp(argv[1], "-V") == 0 || strcmp(argv[1], "--version") == 0) {
+        CliStatus st = argv_parse(&root, argc, argv);
+        argv_free(&root);
+        return (st == ARGV_HELP_REQUESTED || st == ARGV_VERSION_REQUESTED) ? 0 : 1;
+    }
+
+    // Validate that the subcommand is recognized
+    char *root_check_argv[] = {argv[0], argv[1]};
+    if (argv_parse(&root, 2, root_check_argv) != ARGV_OK) {
+        fprintf(stderr, "git: %s\n", argv_get_error(&root));
+        argv_free(&root);
+        return 1;
+    }
+
+    // Forward the remaining arguments to the dedicated subcommand parser
+    // &argv[1] has argv[1] ("commit") as the command name, perfectly serving as argv[0]
+    int sub_argc = argc - 1;
+    char **sub_argv = &argv[1];
+
+    if (strcmp(cmd, "commit") == 0) {
+        run_commit(sub_argc, sub_argv);
+    } else if (strcmp(cmd, "clone") == 0) {
+        run_clone(sub_argc, sub_argv);
+    }
+
+    argv_free(&root);
+    return 0;
+}
+
+static void run_commit(int argc, char **argv) {
+    const char *message = NULL;
+    bool all = false;
+
+    CliParser p;
+    argv_init(&p, "git commit");
+    argv_bind_str(&p, "m", "message", &message, true, NULL, "Commit message");
+    argv_bind_bool(&p, "a", "all", &all, "Automatically stage modified files");
+
+    CliStatus st = argv_parse(&p, argc, argv);
+    if (st == ARGV_HELP_REQUESTED) {
+        argv_free(&p);
+        return;
+    }
+    if (st != ARGV_OK) {
+        fprintf(stderr, "commit: %s\n", argv_get_error(&p));
+        argv_free(&p);
+        exit(1);
+    }
+    printf("Committed: %s (stage all: %s)\n", message, all ? "true" : "false");
+    argv_free(&p);
+}
+
+static void run_clone(int argc, char **argv) {
+    int depth = 0;
+    const char *repo = NULL;
+
+    CliParser p;
+    argv_init(&p, "git clone");
+    argv_bind_int(&p, NULL, "depth", &depth, false, NULL, "Create a shallow clone");
+    argv_bind_pos(&p, "repository", &repo, true, NULL, "Repository URL");
+
+    CliStatus st = argv_parse(&p, argc, argv);
+    if (st == ARGV_HELP_REQUESTED) {
+        argv_free(&p);
+        return;
+    }
+    if (st != ARGV_OK) {
+        fprintf(stderr, "clone: %s\n", argv_get_error(&p));
+        argv_free(&p);
+        exit(1);
+    }
+    printf("Cloning %s (depth: %d)\n", repo, depth);
+    argv_free(&p);
+}
+```
+
+#### What you get automatically:
+- **Top-level help (`git --help`)**:
+  ```text
+  Usage: git [OPTIONS] <command>
+
+  Positional Arguments:
+    <command> <str>      Git subcommand to execute [required]
+      clone: Clone a repository into a new directory
+      commit: Record changes to the repository
+  ```
+- **Contextual subcommand help (`git commit --help`)**:
+  ```text
+  Usage: git commit [OPTIONS]
+
+  Options:
+    -h, --help           Display this help message
+    -m, --message <str>  Commit message [required]
+    -a, --all            Automatically stage modified files
+  ```
+---
+
 ## API Reference
 
 ### Lifecycle and Configuration
