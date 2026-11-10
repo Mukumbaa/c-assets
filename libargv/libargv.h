@@ -53,6 +53,7 @@ typedef struct {
   const char *help;
   const char *choices;
   const char *env_var;
+  const char *default_val;
   CliChoiceHelp *choice_helps;
   size_t choice_help_count;
   size_t choice_help_capacity;
@@ -126,6 +127,9 @@ extern void argv_bind_rest(CliParser *p, const char *name, const char ***target,
 // Maps a specific environment variable name to a flag or positional argument
 extern void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
 
+// Sets the default value for an argument, assigns it to target, and displays it in help
+extern void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val);
+
 // Attaches an explanatory help description to an allowed choice value
 extern bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
 
@@ -136,7 +140,7 @@ extern void argv_add_exclusive(CliParser *p, const char *flags_group);
 extern void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
 
 // Parses command-line tokens, evaluates rules, inspects env vars, and sets targets
-extern CliStatus argv_parse(CliParser *p, int argc, char **argv);
+extern CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);
 
 // Prints the complete usage manual and available options to the configured stream
 extern void argv_print_help(const CliParser *p);
