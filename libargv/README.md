@@ -10,7 +10,7 @@ A single-header C99 command-line argument parser with direct variable binding, v
 - **Direct variable binding**: Binds parsed arguments directly to `bool`, `char`, `int`, `double`, and `const char*` pointers.
 - **Explicit defaults**: Set initial values and help-text defaults in one call via `argv_set_default`.
 - **Validation & constraints**: Whitelist choices (`"json,csv,yaml"`), mutual exclusion groups, and cross-flag dependencies.
-- **POSIX & GNU syntax**: Short-flag clustering (`-xvf`), inline values (`--port=8080`), attached values (`-p8080`), negative numbers (`--offset -12`), and stdin/stdout markers (`-o -`).
+- **POSIX & GNU syntax**: Short-flag clustering (`-xvf`), inline values (`--port=8080`), attached values (`-p8080`, `-p=8080`), negative numbers (`--offset -12`), and stdin/stdout markers (`-o -`).
 - **Standard `--` delimiter**: Treats all tokens following `--` as positional arguments.
 - **Variadic rest arguments**: Collect trailing arguments into a dynamically allocated array.
 - **Environment variable fallback**: Reads unset options from custom or prefixed environment variables (`APP_PORT`).
@@ -56,8 +56,8 @@ int main(int argc, char **argv) {
     char mode;
     const char *format;
     const char *output;
-    bool encrypt;
-    bool plain;
+    bool encrypt = false;
+    bool plain = false;
     const char *key = NULL;
 
     const char *input_file = NULL;
@@ -101,7 +101,7 @@ int main(int argc, char **argv) {
     argv_add_exclusive(&p, "encrypt, plain");
     argv_add_dependency(&p, "key", "encrypt");
 
-    // Positional arguments
+    // Positional arguments (scalar positionals must be bound before rest arguments)
     argv_bind_pos(&p, "input", &input_file, true, NULL, "Input file path");
     argv_bind_rest(&p, "files", &extra_files, &extra_count, false, NULL, "Additional files");
 
@@ -137,12 +137,12 @@ gcc -Wall -Wextra -Wpedantic main.c -o app
 
 | Syntax | Example | Description |
 |---|---|---|
-| No-dash binding | `argv_bind_bool(p, "v", "verbose", ...)` | Accepts options with or without leading dashes. |
+| No-dash binding | `argv_bind_bool(p, "v", "verbose", ...)` | Accepts options with or without leading hyphens. |
 | Standard flags | `-p 8080`, `--port 8080` | Space-separated flag values. |
 | Inline values | `--port=8080` | Key-value flag syntax. |
 | Boolean negation | `--no-compress`, `--compress=false` | Disables a boolean switch. |
 | Short clusters | `-xvf` | Expands to `-x -v -f`. |
-| Attached values | `-p8080`, `-I/usr/include` | Value attached directly to the short flag. |
+| Attached values | `-p8080`, `-p=8080`, `-I/usr/include` | Value attached directly to the short flag. |
 | Counter flags | `-v`, `-vv`, `-vvv` | Increments an `int` counter. |
 | Negative numbers | `--offset -12` | Negative numeric literals are not parsed as flags. |
 | Stdin/stdout flag | `-o -` | Preserves `-` as a literal value. |
@@ -155,6 +155,15 @@ gcc -Wall -Wextra -Wpedantic main.c -o app
 Multi-command CLIs can be structured with a root parser validating subcommands, followed by dispatch to specialized sub-parsers:
 
 ```c
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+#define LIBARGV_IMPLEMENTATION
+#include "libargv.h"
+
+static void run_commit(int argc, const char *const *argv);
+
 int main(int argc, char **argv) {
     const char *cmd = NULL;
 
@@ -187,6 +196,21 @@ int main(int argc, char **argv) {
     argv_free(&root);
     return 0;
 }
+
+static void run_commit(int argc, const char *const *argv) {
+    const char *message = NULL;
+    CliParser p;
+    argv_init(&p, "git commit");
+    argv_bind_str(&p, "m", "message", &message, true, NULL, "Commit message");
+
+    if (argv_parse(&p, argc, argv) != ARGV_OK) {
+        fprintf(stderr, "%s\n", argv_get_error(&p));
+        argv_free(&p);
+        exit(1);
+    }
+    printf("Committed: %s\n", message);
+    argv_free(&p);
+}
 ```
 
 ---
@@ -214,6 +238,7 @@ void argv_bind_int(CliParser *p, const char *sh, const char *lng, int *target, b
 void argv_bind_float(CliParser *p, const char *sh, const char *lng, double *target, bool required, const char *choices, const char *help);
 void argv_bind_str(CliParser *p, const char *sh, const char *lng, const char **target, bool required, const char *choices, const char *help);
 
+// Note: Rest arguments must be bound after all scalar positional arguments
 void argv_bind_pos(CliParser *p, const char *name, const char **target, bool required, const char *choices, const char *help);
 void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 ```
