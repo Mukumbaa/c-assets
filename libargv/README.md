@@ -15,6 +15,8 @@ A single-header C99 command-line argument parser with direct variable binding, v
 - **Variadic rest arguments**: Collect trailing arguments into a dynamically allocated array.
 - **Environment variable fallback**: Reads unset options from custom or prefixed environment variables (`APP_PORT`).
 - **Redirectable output**: Send help and version output to any `FILE*` stream for automated testing.
+- **Repeatable flags**: Collect repeated option occurrences (like `-I dir1 -I dir2`) into dynamic string arrays via `argv_bind_str_list`.
+- **Hidden arguments**: Mark internal or debug flags as hidden via `argv_set_hidden` to omit them from help screens while keeping them fully functional.
 - **Const-correct API**: Fully compatible with `const char *const *argv` without qualifier warnings.
 
 ---
@@ -241,14 +243,15 @@ void argv_bind_str(CliParser *p, const char *sh, const char *lng, const char **t
 // Note: Rest arguments must be bound after all scalar positional arguments
 void argv_bind_pos(CliParser *p, const char *name, const char **target, bool required, const char *choices, const char *help);
 void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
+void argv_bind_str_list(CliParser *p, const char *sh, const char *lng, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 ```
-
 ### Defaults, Rules & Documentation
 
 ```c
 void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val);
 void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
 bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
+void argv_set_hidden(CliParser *p, const char *flag_or_name);
 void argv_add_exclusive(CliParser *p, const char *flags_group);
 void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
 ```
