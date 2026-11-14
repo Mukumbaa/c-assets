@@ -1164,7 +1164,7 @@ extern CliStatus argv_parse(CliParser *p, int argc, const char *const *argv) {
   for (int i = 1; i < scan_end; i++) {
     if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
       const char *inspect = NULL;
-      if (i + 1 < scan_end && argv[i + 1][0] != '-') {
+      if (i + 1 < scan_end && strcmp(argv[i + 1], "-h") != 0 && strcmp(argv[i + 1], "--help") != 0) {
         inspect = argv[i + 1];
       }
 
