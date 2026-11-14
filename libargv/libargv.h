@@ -62,6 +62,7 @@ typedef struct {
   void *target;
   size_t *count_target;
 
+  bool default_bool;
   bool is_positional;
   bool is_hidden;
   bool required;
@@ -82,6 +83,10 @@ typedef struct {
   CliRule *rules;
   size_t rule_count;
   size_t rule_capacity;
+
+  char **env_copies;
+  size_t env_copy_count;
+  size_t env_copy_capacity;
 
   char error[256];
   bool init_failed;
@@ -142,12 +147,12 @@ extern void argv_add_exclusive(CliParser *p, const char *flags_group);
 extern void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
 
 // Parses command-line tokens, evaluates rules, inspects env vars, and sets targets
-extern CliStatus argv_parse(CliParser *p, int argc, const char **argv);
+extern CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);
 
 // Prints the complete usage manual and available options to the configured stream
 extern void argv_print_help(const CliParser *p);
 
-// Configures version information and enables the --version flag and optional short alia
+// Configures version information and enables the --version flag and optional short alias
 extern void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info);
 
 // Binds an option that can be repeated to collect values into an array (-I dir1 -I dir2)
@@ -156,3 +161,4 @@ extern void argv_bind_str_list(CliParser *p, const char *sh, const char *lng, co
 // Marks an argument as hidden so that it does not appear in help screens
 extern void argv_set_hidden(CliParser *p, const char *flag_or_name);
 #endif
+
