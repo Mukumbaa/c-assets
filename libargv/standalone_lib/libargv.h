@@ -90,6 +90,7 @@ typedef struct {
   const char *version;
   char version_short[16];
   const char *version_extra;
+  const char *description;
   char env_prefix[64];
   FILE *output;
   CliArg *args;
@@ -152,6 +153,9 @@ LIBARGV_DEF void argv_set_env(CliParser *p, const char *flag_or_name, const char
 
 // Sets the default value for an argument, assigns it to target, and displays it in help
 LIBARGV_DEF void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val);
+
+// Sets a summary description of the program displayed in help output
+LIBARGV_DEF void argv_set_description(CliParser *p, const char *description);
 
 // Attaches an explanatory help description to an allowed choice value
 LIBARGV_DEF bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
@@ -315,6 +319,7 @@ LIBARGV_DEF void argv_init(CliParser *p, const char *program_name) {
   p->version = NULL;
   p->version_short[0] = '\0';
   p->version_extra = NULL;
+  p->description = NULL;
   p->count = 0;
   p->capacity = ARGV_INIT_CAPACITY;
   p->rules = NULL;
@@ -375,6 +380,7 @@ LIBARGV_DEF void argv_free(CliParser *p) {
   p->version = NULL;
   p->version_short[0] = '\0';
   p->version_extra = NULL;
+  p->description = NULL;
   p->error[0] = '\0';
   p->init_failed = false;
 }
@@ -947,6 +953,10 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
     fprintf(out, "%s v%s\n\n", argv_basename(p->program_name), p->version);
   }
 
+  if (p->description && p->description[0] != '\0') {
+    fprintf(out, "%s\n\n", p->description);
+  }
+
   fprintf(out, "Usage: %s [OPTIONS]", argv_basename(p->program_name));
 
   for (size_t i = 0; i < p->count; i++) {
@@ -1223,6 +1233,11 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
 
   arg->is_set = true;
   return ARGV_OK;
+}
+
+LIBARGV_DEF void argv_set_description(CliParser *p, const char *description) {
+  if (!p) return;
+  p->description = description;
 }
 
 LIBARGV_DEF void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val) {

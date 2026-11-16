@@ -74,6 +74,7 @@ typedef struct {
   const char *version;
   char version_short[16];
   const char *version_extra;
+  const char *description;
   char env_prefix[64];
   FILE *output;
   CliArg *args;
@@ -136,6 +137,9 @@ extern void argv_set_env(CliParser *p, const char *flag_or_name, const char *env
 
 // Sets the default value for an argument, assigns it to target, and displays it in help
 extern void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val);
+
+// Sets a summary description of the program displayed in help output
+extern void argv_set_description(CliParser *p, const char *description);
 
 // Attaches an explanatory help description to an allowed choice value
 extern bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);

@@ -132,6 +132,7 @@ extern void argv_init(CliParser *p, const char *program_name) {
   p->version = NULL;
   p->version_short[0] = '\0';
   p->version_extra = NULL;
+  p->description = NULL;
   p->count = 0;
   p->capacity = ARGV_INIT_CAPACITY;
   p->rules = NULL;
@@ -192,6 +193,7 @@ extern void argv_free(CliParser *p) {
   p->version = NULL;
   p->version_short[0] = '\0';
   p->version_extra = NULL;
+  p->description = NULL;
   p->error[0] = '\0';
   p->init_failed = false;
 }
@@ -764,6 +766,10 @@ extern void argv_print_help(const CliParser *p) {
     fprintf(out, "%s v%s\n\n", argv_basename(p->program_name), p->version);
   }
 
+  if (p->description && p->description[0] != '\0') {
+    fprintf(out, "%s\n\n", p->description);
+  }
+
   fprintf(out, "Usage: %s [OPTIONS]", argv_basename(p->program_name));
 
   for (size_t i = 0; i < p->count; i++) {
@@ -1040,6 +1046,11 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
 
   arg->is_set = true;
   return ARGV_OK;
+}
+
+extern void argv_set_description(CliParser *p, const char *description) {
+  if (!p) return;
+  p->description = description;
 }
 
 extern void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val) {
