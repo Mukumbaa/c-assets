@@ -553,23 +553,27 @@ static void argv_print_wrapped_desc(FILE *stream, const char *left_col, size_t i
   size_t left_len = left_col ? strlen(left_col) : 0;
   if (!stream) stream = stdout;
 
+  if (!text || text[0] == '\0') {
+    if (left_col && left_len > 0) {
+      fprintf(stream, "%s\n", left_col);
+    } else {
+      fputc('\n', stream);
+    }
+    return;
+  }
+
   if (left_col && left_len > 0) {
     fprintf(stream, "%s", left_col);
-    if (left_len < indent) {
+    if (left_len <= indent) {
       fprintf(stream, "%*s", (int)(indent - left_len + gutter), "");
     } else {
-      fprintf(stream, "%*s", (int)gutter, "");
+      fprintf(stream, "\n%*s", (int)(indent + gutter), "");
     }
   } else {
     fprintf(stream, "%*s", (int)(indent + gutter), "");
   }
 
-  if (!text || text[0] == '\0') {
-    fputc('\n', stream);
-    return;
-  }
-
-  size_t cont_indent = (left_len < indent) ? (indent + gutter) : (left_len + gutter);
+  size_t cont_indent = indent + gutter;
   const char *p = text;
   size_t line_len = 0;
   bool first_word = true;
