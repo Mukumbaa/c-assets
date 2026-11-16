@@ -795,7 +795,7 @@ extern void argv_print_help(const CliParser *p) {
     size_t len = 2;
     if (has_short && has_long) len += strlen(arg->short_flag) + 2 + strlen(long_disp);
     else if (has_short) len += strlen(arg->short_flag);
-    else if (has_long) len += 6 + strlen(long_disp);
+    else if (has_long) len += 4 + strlen(long_disp);
 
     char hint[64];
     argv_format_type_hint(arg, hint, sizeof(hint));
