@@ -396,7 +396,7 @@ TEST(NewFeatures, PlaceholderGroupsEpilogAndWidth) {
   read_tmp_output(tmp, buf, sizeof(buf));
 
   ASSERT_TRUE(strstr(buf, "Markdown viewer") != NULL);
-  ASSERT_TRUE(strstr(buf, "Usage: gomdv [OPTIONS] [target <file>]") != NULL);
+  ASSERT_TRUE(strstr(buf, "Usage: gomdv [OPTIONS] [file]") != NULL);
   ASSERT_TRUE(strstr(buf, "-p, --port <port>...") != NULL);
   ASSERT_TRUE(strstr(buf, "\nPDF Options:\n") != NULL);
   ASSERT_TRUE(strstr(buf, "-o, --pdf <path>") != NULL);
