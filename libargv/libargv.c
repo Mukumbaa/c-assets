@@ -296,8 +296,8 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
   arg->choice_help_capacity = 0;
   arg->env_var = NULL;
   arg->default_val = NULL;
-  arg->placeholder = NULL;
-  arg->help_group = NULL;
+  arg->placeholder[0] = '\0';
+  arg->help_group[0] = '\0';
   arg->is_hidden = false;
   arg->is_set = false;
   arg->help = help;
@@ -441,7 +441,14 @@ extern void argv_set_placeholder(CliParser *p, const char *flag_or_name, const c
     p->init_failed = true;
     return;
   }
-  arg->placeholder = placeholder;
+  const char *trimmed;
+  size_t len;
+  argv_trim_bounds(placeholder, &trimmed, &len);
+  if (len > 0) {
+    snprintf(arg->placeholder, sizeof(arg->placeholder), "%.*s", (int)len, trimmed);
+  } else {
+    arg->placeholder[0] = '\0';
+  }
 }
 
 extern void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *group) {
@@ -452,7 +459,14 @@ extern void argv_set_help_group(CliParser *p, const char *flag_or_name, const ch
     p->init_failed = true;
     return;
   }
-  arg->help_group = group;
+  const char *trimmed;
+  size_t len;
+  argv_trim_bounds(group, &trimmed, &len);
+  if (len > 0) {
+    snprintf(arg->help_group, sizeof(arg->help_group), "%.*s", (int)len, trimmed);
+  } else {
+    arg->help_group[0] = '\0';
+  }
 }
 
 static bool argv_choice_exists_in_list(const CliArg *arg, const char *choice) {
@@ -636,7 +650,7 @@ static size_t argv_count_choices(const CliArg *arg) {
 static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size) {
   if (!arg || !out || out_size == 0) return;
 
-  if (arg->placeholder && arg->placeholder[0] != '\0') {
+  if (arg->placeholder[0] != '\0' && arg->placeholder[0] != '\0') {
     const char *ph = arg->placeholder;
     bool wrapped = (ph[0] == '<' || ph[0] == '{' || ph[0] == '[');
     bool is_list = (arg->type == ARGV_TYPE_STR_LIST || arg->type == ARGV_TYPE_INT_LIST || arg->type == ARGV_TYPE_FLOAT_LIST);
@@ -937,6 +951,34 @@ static void argv_print_option_help(const CliParser *p, const CliArg *arg, size_t
   }
 }
 
+static void argv_format_pos_label(const CliArg *arg, char *out, size_t out_sz) {
+  if (!arg || !out || out_sz == 0) return;
+  if (arg->placeholder[0] != '\0') {
+    const char *ph = arg->placeholder;
+    size_t len = strlen(ph);
+    if (len >= 2 && ph[0] == '<' && ph[len - 1] == '>') {
+      ph++;
+      len -= 2;
+    }
+    if (arg->type == ARGV_TYPE_REST) {
+      snprintf(out, out_sz, "%.*s...", (int)len, ph);
+    } else {
+      snprintf(out, out_sz, "%.*s", (int)len, ph);
+    }
+    return;
+  }
+  char hint[64] = {0};
+  if (arg->choices) {
+    argv_format_type_hint(arg, hint, sizeof(hint));
+  }
+  const char *name = arg->name ? arg->name : "arg";
+  if (arg->type == ARGV_TYPE_REST) {
+    snprintf(out, out_sz, "%s...%s", name, hint);
+  } else {
+    snprintf(out, out_sz, "%s%s", name, hint);
+  }
+}
+
 extern void argv_print_help(const CliParser *p) {
   if (p == NULL) return;
   FILE *out = p->output ? p->output : stdout;
@@ -953,16 +995,10 @@ extern void argv_print_help(const CliParser *p) {
 
   for (size_t i = 0; i < p->count; i++) {
     if (p->args[i].is_positional && !p->args[i].is_hidden) {
-      char hint[64];
-      argv_format_type_hint(&p->args[i], hint, sizeof(hint));
-      bool show_hint = (p->args[i].choices != NULL || (p->args[i].placeholder && p->args[i].placeholder[0] != '\0'));
-      if (p->args[i].type == ARGV_TYPE_REST) {
-        if (p->args[i].required) fprintf(out, " <%s...%s>", p->args[i].name, show_hint ? hint : "");
-        else fprintf(out, " [%s...%s]", p->args[i].name, show_hint ? hint : "");
-      } else {
-        if (p->args[i].required) fprintf(out, " <%s%s>", p->args[i].name, show_hint ? hint : "");
-        else fprintf(out, " [%s%s]", p->args[i].name, show_hint ? hint : "");
-      }
+      char label[128];
+      argv_format_pos_label(&p->args[i], label, sizeof(label));
+      if (p->args[i].required) fprintf(out, " <%s>", label);
+      else fprintf(out, " [%s]", label);
     }
   }
   fprintf(out, "\n\n");
@@ -1008,19 +1044,19 @@ extern void argv_print_help(const CliParser *p) {
   for (size_t i = 0; i < p->count; i++) {
     const CliArg *arg = &p->args[i];
     if (arg->is_positional || arg->is_hidden) continue;
-    if (!arg->help_group || arg->help_group[0] == '\0') {
+    if (arg->help_group[0] == '\0') {
       argv_print_option_help(p, arg, max_len, desc_width);
     }
   }
 
   for (size_t i = 0; i < p->count; i++) {
     const char *grp = p->args[i].help_group;
-    if (p->args[i].is_positional || p->args[i].is_hidden || !grp || grp[0] == '\0') continue;
+    if (p->args[i].is_positional || p->args[i].is_hidden || grp[0] == '\0') continue;
 
     bool seen = false;
     for (size_t k = 0; k < i; k++) {
       if (!p->args[k].is_positional && !p->args[k].is_hidden &&
-          p->args[k].help_group && strcmp(p->args[k].help_group, grp) == 0) {
+          strcmp(p->args[k].help_group, grp) == 0) {
         seen = true;
         break;
       }
@@ -1034,7 +1070,7 @@ extern void argv_print_help(const CliParser *p) {
     for (size_t j = i; j < p->count; j++) {
       const CliArg *arg = &p->args[j];
       if (!arg->is_positional && !arg->is_hidden &&
-          arg->help_group && strcmp(arg->help_group, grp) == 0) {
+          strcmp(arg->help_group, grp) == 0) {
         argv_print_option_help(p, arg, max_len, desc_width);
       }
     }
@@ -1049,15 +1085,11 @@ extern void argv_print_help(const CliParser *p) {
     for (size_t i = 0; i < p->count; i++) {
       const CliArg *arg = &p->args[i];
       if (!arg->is_positional || arg->is_hidden) continue;
-      char buf[256] = {0};
-      char hint[64];
-      argv_format_type_hint(arg, hint, sizeof(hint));
-      bool show_hint = (arg->choices != NULL || (arg->placeholder && arg->placeholder[0] != '\0'));
-      if (arg->type == ARGV_TYPE_REST) {
-        snprintf(buf, sizeof(buf), "  <%s...%s>", arg->name ? arg->name : "arg", show_hint ? hint : "");
-      } else {
-        snprintf(buf, sizeof(buf), "  <%s%s>", arg->name ? arg->name : "arg", show_hint ? hint : "");
-      }
+
+      char label[128];
+      argv_format_pos_label(arg, label, sizeof(label));
+      char buf[256];
+      snprintf(buf, sizeof(buf), "  <%s>", label);
 
       char env_key[64] = {0};
       argv_get_effective_env(p, arg, env_key, sizeof(env_key));
@@ -1418,7 +1450,7 @@ extern CliStatus argv_parse(CliParser *p, int argc, const char *const *argv) {
     if (strcmp(token, "--") == 0) { scan_end = i; break; }
     if (p->stop_at_positional) {
       if (strcmp(token, "-h") == 0 || strcmp(token, "--help") == 0) {
-        scan_end = (i + 1 < argc) ? (i + 2) : (i + 1);
+        scan_end = (i + 1 < argc && strcmp(argv[i + 1], "--") != 0) ? (i + 2) : (i + 1);
         break;
       }
       if (token[0] != '-' || strcmp(token, "-") == 0) {

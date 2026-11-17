@@ -54,8 +54,8 @@ typedef struct {
   char short_flag[16];
   char long_flag[64];
   const char *help;
-  const char *placeholder;
-  const char *help_group;
+  char placeholder[64];
+  char help_group[64];
   const char *choices;
   const char *env_var;
   const char *default_val;
