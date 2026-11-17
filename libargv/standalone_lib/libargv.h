@@ -869,7 +869,7 @@ static size_t argv_count_choices(const CliArg *arg) {
 static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size) {
   if (!arg || !out || out_size == 0) return;
 
-  if (arg->placeholder[0] != '\0' && arg->placeholder[0] != '\0') {
+  if (arg->placeholder[0] != '\0') {
     const char *ph = arg->placeholder;
     bool wrapped = (ph[0] == '<' || ph[0] == '{' || ph[0] == '[');
     bool is_list = (arg->type == ARGV_TYPE_STR_LIST || arg->type == ARGV_TYPE_INT_LIST || arg->type == ARGV_TYPE_FLOAT_LIST);
