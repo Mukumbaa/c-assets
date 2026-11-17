@@ -32,6 +32,8 @@ typedef enum {
   ARGV_TYPE_STR,
   ARGV_TYPE_REST,
   ARGV_TYPE_STR_LIST,
+  ARGV_TYPE_INT_LIST,
+  ARGV_TYPE_FLOAT_LIST,
 } CliType;
 
 typedef enum {
@@ -68,6 +70,8 @@ typedef struct {
   char short_flag[16];
   char long_flag[64];
   const char *help;
+  const char *placeholder;
+  const char *help_group;
   const char *choices;
   const char *env_var;
   const char *default_val;
@@ -91,7 +95,12 @@ typedef struct {
   char version_short[16];
   const char *version_extra;
   const char *description;
+  const char *epilog;
   char env_prefix[64];
+  size_t help_width;
+  bool stop_at_positional;
+  const char *const *remaining_argv;
+  int remaining_argc;
   FILE *output;
   CliArg *args;
   size_t count;
@@ -157,9 +166,26 @@ LIBARGV_DEF void argv_set_default(CliParser *p, const char *flag_or_name, const 
 // Sets a summary description of the program displayed in help output
 LIBARGV_DEF void argv_set_description(CliParser *p, const char *description);
 
+// Sets a trailing text block displayed at the end of help output
+LIBARGV_DEF void argv_set_epilog(CliParser *p, const char *epilog);
+
+// Configures the description wrapping width in characters (0 = auto from COLUMNS or default 50)
+LIBARGV_DEF void argv_set_help_width(CliParser *p, size_t width);
+
+// Sets a custom placeholder label shown in help output (e.g. "path" -> <path>)
+LIBARGV_DEF void argv_set_placeholder(CliParser *p, const char *flag_or_name, const char *placeholder);
+
+// Assigns an option to a named section in help output
+LIBARGV_DEF void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *group);
+
 // Attaches an explanatory help description to an allowed choice value
 LIBARGV_DEF bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
 
+// Stops flag and help parsing at the first positional argument, storing trailing tokens for argv_remaining_args
+LIBARGV_DEF void argv_set_stop_at_positional(CliParser *p, bool stop);
+
+// Returns the trailing arguments captured after stopping at a positional argument and writes their count to out_argc
+LIBARGV_DEF const char *const *argv_remaining_args(const CliParser *p, int *out_argc);
 // Declares a group of flags (delimited by commas or pipes) that cannot be used together
 LIBARGV_DEF void argv_add_exclusive(CliParser *p, const char *flags_group);
 
@@ -175,8 +201,14 @@ LIBARGV_DEF void argv_print_help(const CliParser *p);
 // Configures version information and enables the --version flag and optional short alias
 LIBARGV_DEF void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info);
 
-// Binds an option that can be repeated to collect values into an array (-I dir1 -I dir2)
+// Binds an option that can be repeated to collect string values into an array (-I dir1 -I dir2)
 LIBARGV_DEF void argv_bind_str_list(CliParser *p, const char *sh, const char *lng, const char ***target, size_t *count, bool required, const char *choices, const char *help);
+
+// Binds an option that can be repeated to collect integer values into an array (-p 80 -p 443)
+LIBARGV_DEF void argv_bind_int_list(CliParser *p, const char *sh, const char *lng, int **target, size_t *count, bool required, const char *choices, const char *help);
+
+// Binds an option that can be repeated to collect double values into an array
+LIBARGV_DEF void argv_bind_float_list(CliParser *p, const char *sh, const char *lng, double **target, size_t *count, bool required, const char *choices, const char *help);
 
 // Marks an argument as hidden so that it does not appear in help screens
 LIBARGV_DEF void argv_set_hidden(CliParser *p, const char *flag_or_name);
@@ -320,6 +352,8 @@ LIBARGV_DEF void argv_init(CliParser *p, const char *program_name) {
   p->version_short[0] = '\0';
   p->version_extra = NULL;
   p->description = NULL;
+  p->epilog = NULL;
+  p->help_width = 0;
   p->count = 0;
   p->capacity = ARGV_INIT_CAPACITY;
   p->rules = NULL;
@@ -332,6 +366,9 @@ LIBARGV_DEF void argv_init(CliParser *p, const char *program_name) {
   p->env_prefix[0] = '\0';
   p->output = stdout;
   p->init_failed = false;
+  p->stop_at_positional = false;
+  p->remaining_argv = NULL;
+  p->remaining_argc = 0;
   p->args = (CliArg *)malloc(p->capacity * sizeof(CliArg));
   if (p->args == NULL) {
     p->capacity = 0;
@@ -344,11 +381,16 @@ LIBARGV_DEF void argv_free(CliParser *p) {
   if (p == NULL) return;
   if (p->args != NULL) {
     for (size_t i = 0; i < p->count; i++) {
-      if ((p->args[i].type == ARGV_TYPE_REST || p->args[i].type == ARGV_TYPE_STR_LIST) && p->args[i].target != NULL) {
-        const char ***arr = (const char ***)p->args[i].target;
-        if (arr != NULL && *arr != NULL) {
-          free(*arr);
-          *arr = NULL;
+      if (p->args[i].target != NULL) {
+        if (p->args[i].type == ARGV_TYPE_REST || p->args[i].type == ARGV_TYPE_STR_LIST) {
+          const char ***arr = (const char ***)p->args[i].target;
+          if (*arr != NULL) { free(*arr); *arr = NULL; }
+        } else if (p->args[i].type == ARGV_TYPE_INT_LIST) {
+          int **arr = (int **)p->args[i].target;
+          if (*arr != NULL) { free(*arr); *arr = NULL; }
+        } else if (p->args[i].type == ARGV_TYPE_FLOAT_LIST) {
+          double **arr = (double **)p->args[i].target;
+          if (*arr != NULL) { free(*arr); *arr = NULL; }
         }
       }
       if (p->args[i].choice_helps != NULL) {
@@ -381,8 +423,13 @@ LIBARGV_DEF void argv_free(CliParser *p) {
   p->version_short[0] = '\0';
   p->version_extra = NULL;
   p->description = NULL;
+  p->epilog = NULL;
+  p->help_width = 0;
   p->error[0] = '\0';
   p->init_failed = false;
+  p->stop_at_positional = false;
+  p->remaining_argv = NULL;
+  p->remaining_argc = 0;
 }
 
 LIBARGV_DEF const char *argv_get_error(const CliParser *p) {
@@ -415,6 +462,12 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
     p->init_failed = true;
     return;
   }
+
+  char norm_sh[16];
+  char norm_lng[64];
+  argv_normalize_short(sh, norm_sh, sizeof(norm_sh));
+  argv_normalize_long(lng, norm_lng, sizeof(norm_lng));
+
   if (is_pos) {
     for (size_t i = 0; i < p->count; i++) {
       if (p->args[i].is_positional && p->args[i].type == ARGV_TYPE_REST) {
@@ -422,14 +475,34 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
         p->init_failed = true;
         return;
       }
+      if (p->args[i].is_positional && name && p->args[i].name && strcmp(p->args[i].name, name) == 0) {
+        snprintf(p->error, sizeof(p->error), "Duplicate positional argument '%s'", name);
+        p->init_failed = true;
+        return;
+      }
+    }
+  } else {
+    for (size_t i = 0; i < p->count; i++) {
+      if (p->args[i].is_positional) continue;
+      if (norm_sh[0] != '\0' && strcmp(p->args[i].short_flag, norm_sh) == 0) {
+        snprintf(p->error, sizeof(p->error), "Duplicate short flag '%s'", norm_sh);
+        p->init_failed = true;
+        return;
+      }
+      if (norm_lng[0] != '\0' && strcmp(p->args[i].long_flag, norm_lng) == 0) {
+        snprintf(p->error, sizeof(p->error), "Duplicate long flag '%s'", norm_lng);
+        p->init_failed = true;
+        return;
+      }
     }
   }
+
   if (!argv_ensure_capacity(p)) return;
 
   CliArg *arg = &p->args[p->count++];
   arg->name = name;
-  argv_normalize_short(sh, arg->short_flag, sizeof(arg->short_flag));
-  argv_normalize_long(lng, arg->long_flag, sizeof(arg->long_flag));
+  snprintf(arg->short_flag, sizeof(arg->short_flag), "%s", norm_sh);
+  snprintf(arg->long_flag, sizeof(arg->long_flag), "%s", norm_lng);
   arg->type = type;
   arg->target = target;
   arg->count_target = count_target;
@@ -442,6 +515,8 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
   arg->choice_help_capacity = 0;
   arg->env_var = NULL;
   arg->default_val = NULL;
+  arg->placeholder = NULL;
+  arg->help_group = NULL;
   arg->is_hidden = false;
   arg->is_set = false;
   arg->help = help;
@@ -507,6 +582,32 @@ LIBARGV_DEF void argv_bind_str_list(CliParser *p, const char *sh, const char *ln
   argv_add_arg_internal(p, NULL, sh, lng, ARGV_TYPE_STR_LIST, (void *)target, count, required, false, choices, help);
 }
 
+LIBARGV_DEF void argv_bind_int_list(CliParser *p, const char *sh, const char *lng, int **target, size_t *count, bool required, const char *choices, const char *help) {
+  if (p == NULL) return;
+  if (target == NULL || count == NULL) {
+    const char *disp = (lng && lng[0]) ? lng : ((sh && sh[0]) ? sh : "int_list");
+    snprintf(p->error, sizeof(p->error), "Target and count pointers for flag '%s' cannot be NULL", disp);
+    p->init_failed = true;
+    return;
+  }
+  *target = NULL;
+  *count = 0;
+  argv_add_arg_internal(p, NULL, sh, lng, ARGV_TYPE_INT_LIST, (void *)target, count, required, false, choices, help);
+}
+
+LIBARGV_DEF void argv_bind_float_list(CliParser *p, const char *sh, const char *lng, double **target, size_t *count, bool required, const char *choices, const char *help) {
+  if (p == NULL) return;
+  if (target == NULL || count == NULL) {
+    const char *disp = (lng && lng[0]) ? lng : ((sh && sh[0]) ? sh : "float_list");
+    snprintf(p->error, sizeof(p->error), "Target and count pointers for flag '%s' cannot be NULL", disp);
+    p->init_failed = true;
+    return;
+  }
+  *target = NULL;
+  *count = 0;
+  argv_add_arg_internal(p, NULL, sh, lng, ARGV_TYPE_FLOAT_LIST, (void *)target, count, required, false, choices, help);
+}
+
 static CliArg *argv_find_arg(CliParser *p, const char *ident) {
   if (!p || !ident) return NULL;
   const char *trimmed;
@@ -549,6 +650,28 @@ LIBARGV_DEF void argv_set_hidden(CliParser *p, const char *flag_or_name) {
     return;
   }
   arg->is_hidden = true;
+}
+
+LIBARGV_DEF void argv_set_placeholder(CliParser *p, const char *flag_or_name, const char *placeholder) {
+  if (!p || !flag_or_name) return;
+  CliArg *arg = argv_find_arg(p, flag_or_name);
+  if (!arg) {
+    snprintf(p->error, sizeof(p->error), "Argument '%s' not found to set placeholder", flag_or_name);
+    p->init_failed = true;
+    return;
+  }
+  arg->placeholder = placeholder;
+}
+
+LIBARGV_DEF void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *group) {
+  if (!p || !flag_or_name) return;
+  CliArg *arg = argv_find_arg(p, flag_or_name);
+  if (!arg) {
+    snprintf(p->error, sizeof(p->error), "Argument '%s' not found to set help group", flag_or_name);
+    p->init_failed = true;
+    return;
+  }
+  arg->help_group = group;
 }
 
 static bool argv_choice_exists_in_list(const CliArg *arg, const char *choice) {
@@ -623,6 +746,15 @@ LIBARGV_DEF bool argv_set_choice_help(CliParser *p, const char *flag_or_name, co
   return true;
 }
 
+LIBARGV_DEF void argv_set_stop_at_positional(CliParser *p, bool stop) {
+  if (p) p->stop_at_positional = stop;
+}
+
+LIBARGV_DEF const char *const *argv_remaining_args(const CliParser *p, int *out_argc) {
+  if (out_argc) *out_argc = p ? p->remaining_argc : 0;
+  return p ? p->remaining_argv : NULL;
+}
+
 static bool argv_add_rule_internal(CliParser *p, CliRuleType type, const char *target, const char *requires) {
   if (p == NULL) return false;
   if (p->rule_count >= p->rule_capacity) {
@@ -673,7 +805,7 @@ static bool argv_check_choice(const CliArg *arg, const char *val_str, int int_v,
       if (token_len == strlen(val_str) && strncmp(start, val_str, token_len) == 0) {
         return true;
       }
-    } else if (arg->type == ARGV_TYPE_INT) {
+    } else if (arg->type == ARGV_TYPE_INT || arg->type == ARGV_TYPE_INT_LIST) {
       char token_buf[256];
       if (token_len < sizeof(token_buf)) {
         memcpy(token_buf, start, token_len);
@@ -685,7 +817,7 @@ static bool argv_check_choice(const CliArg *arg, const char *val_str, int int_v,
           return true;
         }
       }
-    } else if (arg->type == ARGV_TYPE_FLOAT) {
+    } else if (arg->type == ARGV_TYPE_FLOAT || arg->type == ARGV_TYPE_FLOAT_LIST) {
       char token_buf[256];
       if (token_len < sizeof(token_buf)) {
         memcpy(token_buf, start, token_len);
@@ -723,6 +855,18 @@ static size_t argv_count_choices(const CliArg *arg) {
 static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size) {
   if (!arg || !out || out_size == 0) return;
 
+  if (arg->placeholder && arg->placeholder[0] != '\0') {
+    const char *ph = arg->placeholder;
+    bool wrapped = (ph[0] == '<' || ph[0] == '{' || ph[0] == '[');
+    bool is_list = (arg->type == ARGV_TYPE_STR_LIST || arg->type == ARGV_TYPE_INT_LIST || arg->type == ARGV_TYPE_FLOAT_LIST);
+    if (wrapped) {
+      snprintf(out, out_size, is_list ? " %s..." : " %s", ph);
+    } else {
+      snprintf(out, out_size, is_list ? " <%s>..." : " <%s>", ph);
+    }
+    return;
+  }
+
   if (arg->choices && arg->choice_help_count < argv_count_choices(arg)) {
     snprintf(out, out_size, " {%s}", arg->choices);
     return;
@@ -731,11 +875,28 @@ static void argv_format_type_hint(const CliArg *arg, char *out, size_t out_size)
     case ARGV_TYPE_STR: snprintf(out, out_size, " <str>"); break;
     case ARGV_TYPE_STR_LIST: snprintf(out, out_size, " <str>..."); break;
     case ARGV_TYPE_INT: snprintf(out, out_size, " <int>"); break;
+    case ARGV_TYPE_INT_LIST: snprintf(out, out_size, " <int>..."); break;
     case ARGV_TYPE_FLOAT: snprintf(out, out_size, " <num>"); break;
+    case ARGV_TYPE_FLOAT_LIST: snprintf(out, out_size, " <num>..."); break;
     case ARGV_TYPE_CHAR: snprintf(out, out_size, " <char>"); break;
     case ARGV_TYPE_REST: snprintf(out, out_size, "..."); break;
     default: out[0] = '\0'; break;
   }
+}
+
+static size_t argv_get_desc_width(const CliParser *p, size_t left_col_width) {
+  if (p && p->help_width > 0) return p->help_width;
+  const char *cols_str = getenv("COLUMNS");
+  if (cols_str && cols_str[0] != '\0') {
+    char *endptr = NULL;
+    errno = 0;
+    long cols = strtol(cols_str, &endptr, 10);
+    if (errno == 0 && *endptr == '\0' && cols > 0) {
+      size_t avail = ((size_t)cols > left_col_width) ? ((size_t)cols - left_col_width) : 30;
+      return (avail < 30) ? 30 : avail;
+    }
+  }
+  return 50;
 }
 
 static void argv_print_wrapped_desc(FILE *stream, const char *left_col, size_t indent, size_t gutter, const char *text, size_t desc_width) {
@@ -842,7 +1003,7 @@ static void argv_format_default_display(const char *in, char *out, size_t out_sz
 
 static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
   if (p == NULL || arg == NULL) return;
-  size_t desc_width = 50;
+  size_t desc_width = argv_get_desc_width(p, 23);
   FILE *out = p->output ? p->output : stdout;
 
   char eff_env[64] = {0};
@@ -943,11 +1104,61 @@ static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
   argv_print_wrapped_desc(out, "", 2, 0, desc, desc_width);
 }
 
+static void argv_print_option_help(const CliParser *p, const CliArg *arg, size_t max_len, size_t desc_width) {
+  FILE *out = p->output ? p->output : stdout;
+
+  char long_disp[128];
+  argv_format_long_display(arg, long_disp, sizeof(long_disp));
+
+  bool has_short = (arg->short_flag[0] != '\0');
+  bool has_long = (long_disp[0] != '\0');
+
+  char buf[256] = {0};
+  if (has_short && has_long) snprintf(buf, sizeof(buf), "  %s, %s", arg->short_flag, long_disp);
+  else if (has_short) snprintf(buf, sizeof(buf), "  %s", arg->short_flag);
+  else if (has_long) snprintf(buf, sizeof(buf), "      %s", long_disp);
+
+  char hint[64];
+  argv_format_type_hint(arg, hint, sizeof(hint));
+  strncat(buf, hint, sizeof(buf) - strlen(buf) - 1);
+
+  char env_key[64] = {0};
+  argv_get_effective_env(p, arg, env_key, sizeof(env_key));
+
+  char full_desc[1024];
+  size_t len = 0;
+  full_desc[0] = '\0';
+
+  if (arg->help && arg->help[0]) {
+    len += snprintf(full_desc + len, sizeof(full_desc) - len, "%s", arg->help);
+  }
+  if (arg->required && len < sizeof(full_desc)) {
+    len += snprintf(full_desc + len, sizeof(full_desc) - len, " [required]");
+  }
+  if (arg->default_val && len < sizeof(full_desc)) {
+    char disp_def[64];
+    argv_format_default_display(arg->default_val, disp_def, sizeof(disp_def));
+    len += snprintf(full_desc + len, sizeof(full_desc) - len, " [default: %s]", disp_def);
+  }
+  if (env_key[0] && len < sizeof(full_desc)) {
+    len += snprintf(full_desc + len, sizeof(full_desc) - len, " [env: %s]", env_key);
+  }
+
+  argv_print_wrapped_desc(out, buf, max_len, 2, full_desc, desc_width);
+
+  if (arg->choice_help_count > 0) {
+    for (size_t c = 0; c < arg->choice_help_count; c++) {
+      char left[128];
+      snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
+      size_t c_indent = strlen(left);
+      argv_print_wrapped_desc(out, left, c_indent, 1, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
+    }
+  }
+}
+
 LIBARGV_DEF void argv_print_help(const CliParser *p) {
   if (p == NULL) return;
   FILE *out = p->output ? p->output : stdout;
-
-  size_t desc_width = 50;
 
   if (p->version && p->version[0] != '\0') {
     fprintf(out, "%s v%s\n\n", argv_basename(p->program_name), p->version);
@@ -963,12 +1174,13 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
     if (p->args[i].is_positional && !p->args[i].is_hidden) {
       char hint[64];
       argv_format_type_hint(&p->args[i], hint, sizeof(hint));
+      bool show_hint = (p->args[i].choices != NULL || (p->args[i].placeholder && p->args[i].placeholder[0] != '\0'));
       if (p->args[i].type == ARGV_TYPE_REST) {
-        if (p->args[i].required) fprintf(out, " <%s...%s>", p->args[i].name, p->args[i].choices ? hint : "");
-        else fprintf(out, " [%s...%s]", p->args[i].name, p->args[i].choices ? hint : "");
+        if (p->args[i].required) fprintf(out, " <%s...%s>", p->args[i].name, show_hint ? hint : "");
+        else fprintf(out, " [%s...%s]", p->args[i].name, show_hint ? hint : "");
       } else {
-        if (p->args[i].required) fprintf(out, " <%s%s>", p->args[i].name, p->args[i].choices ? hint : "");
-        else fprintf(out, " [%s%s]", p->args[i].name, p->args[i].choices ? hint : "");
+        if (p->args[i].required) fprintf(out, " <%s%s>", p->args[i].name, show_hint ? hint : "");
+        else fprintf(out, " [%s%s]", p->args[i].name, show_hint ? hint : "");
       }
     }
   }
@@ -997,6 +1209,8 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
     if (len > max_len && len < 42) max_len = len;
   }
 
+  size_t desc_width = argv_get_desc_width(p, max_len + 2);
+
   fprintf(out, "Options:\n");
   argv_print_wrapped_desc(out, "  -h, --help", max_len, 2, "Display this help message", desc_width);
 
@@ -1013,52 +1227,34 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
   for (size_t i = 0; i < p->count; i++) {
     const CliArg *arg = &p->args[i];
     if (arg->is_positional || arg->is_hidden) continue;
-
-    char long_disp[128];
-    argv_format_long_display(arg, long_disp, sizeof(long_disp));
-
-    bool has_short = (arg->short_flag[0] != '\0');
-    bool has_long = (long_disp[0] != '\0');
-
-    char buf[256] = {0};
-    if (has_short && has_long) snprintf(buf, sizeof(buf), "  %s, %s", arg->short_flag, long_disp);
-    else if (has_short) snprintf(buf, sizeof(buf), "  %s", arg->short_flag);
-    else if (has_long) snprintf(buf, sizeof(buf), "      %s", long_disp);
-
-    char hint[64];
-    argv_format_type_hint(arg, hint, sizeof(hint));
-    strncat(buf, hint, sizeof(buf) - strlen(buf) - 1);
-
-    char env_key[64] = {0};
-    argv_get_effective_env(p, arg, env_key, sizeof(env_key));
-
-    char full_desc[1024];
-    size_t len = 0;
-    full_desc[0] = '\0';
-
-    if (arg->help && arg->help[0]) {
-      len += snprintf(full_desc + len, sizeof(full_desc) - len, "%s", arg->help);
+    if (!arg->help_group || arg->help_group[0] == '\0') {
+      argv_print_option_help(p, arg, max_len, desc_width);
     }
-    if (arg->required && len < sizeof(full_desc)) {
-      len += snprintf(full_desc + len, sizeof(full_desc) - len, " [required]");
-    }
-    if (arg->default_val && len < sizeof(full_desc)) {
-      char disp_def[64];
-      argv_format_default_display(arg->default_val, disp_def, sizeof(disp_def));
-      len += snprintf(full_desc + len, sizeof(full_desc) - len, " [default: %s]", disp_def);
-    }
-    if (env_key[0] && len < sizeof(full_desc)) {
-      len += snprintf(full_desc + len, sizeof(full_desc) - len, " [env: %s]", env_key);
-    }
+  }
 
-    argv_print_wrapped_desc(out, buf, max_len, 2, full_desc, desc_width);
+  for (size_t i = 0; i < p->count; i++) {
+    const char *grp = p->args[i].help_group;
+    if (p->args[i].is_positional || p->args[i].is_hidden || !grp || grp[0] == '\0') continue;
 
-    if (arg->choice_help_count > 0) {
-      for (size_t c = 0; c < arg->choice_help_count; c++) {
-        char left[128];
-        snprintf(left, sizeof(left), "%*s  %s:", (int)max_len, "", arg->choice_helps[c].choice);
-        size_t c_indent = strlen(left);
-        argv_print_wrapped_desc(out, left, c_indent, 1, arg->choice_helps[c].help, desc_width > 6 ? desc_width - 6 : 30);
+    bool seen = false;
+    for (size_t k = 0; k < i; k++) {
+      if (!p->args[k].is_positional && !p->args[k].is_hidden &&
+          p->args[k].help_group && strcmp(p->args[k].help_group, grp) == 0) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen) continue;
+
+    size_t glen = strlen(grp);
+    if (glen > 0 && grp[glen - 1] == ':') glen--;
+    fprintf(out, "\n%.*s:\n", (int)glen, grp);
+
+    for (size_t j = i; j < p->count; j++) {
+      const CliArg *arg = &p->args[j];
+      if (!arg->is_positional && !arg->is_hidden &&
+          arg->help_group && strcmp(arg->help_group, grp) == 0) {
+        argv_print_option_help(p, arg, max_len, desc_width);
       }
     }
   }
@@ -1075,10 +1271,11 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
       char buf[256] = {0};
       char hint[64];
       argv_format_type_hint(arg, hint, sizeof(hint));
+      bool show_hint = (arg->choices != NULL || (arg->placeholder && arg->placeholder[0] != '\0'));
       if (arg->type == ARGV_TYPE_REST) {
-        snprintf(buf, sizeof(buf), "  <%s...%s>", arg->name ? arg->name : "arg", arg->choices ? hint : "");
+        snprintf(buf, sizeof(buf), "  <%s...%s>", arg->name ? arg->name : "arg", show_hint ? hint : "");
       } else {
-        snprintf(buf, sizeof(buf), "  <%s%s>", arg->name ? arg->name : "arg", arg->choices ? hint : "");
+        snprintf(buf, sizeof(buf), "  <%s%s>", arg->name ? arg->name : "arg", show_hint ? hint : "");
       }
 
       char env_key[64] = {0};
@@ -1114,6 +1311,10 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
         }
       }
     }
+  }
+
+  if (p->epilog && p->epilog[0] != '\0') {
+    fprintf(out, "\n%s\n", p->epilog);
   }
 }
 
@@ -1159,18 +1360,21 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
       return ARGV_ERR_INVALID_VALUE;
     }
     bool_v = (pb == 1);
-  } else if (arg->type == ARGV_TYPE_REST || arg->type == ARGV_TYPE_STR_LIST) {
-    if ((const char ***)arg->target == NULL) {
+  } else if (arg->type == ARGV_TYPE_REST || arg->type == ARGV_TYPE_STR_LIST ||
+      arg->type == ARGV_TYPE_INT_LIST || arg->type == ARGV_TYPE_FLOAT_LIST) {
+    if (arg->target == NULL) {
       snprintf(p->error, sizeof(p->error), "Target pointer for '%s' is NULL", flag_name);
       return ARGV_ERR_INVALID_VALUE;
     }
-  } else if (arg->type == ARGV_TYPE_CHAR) {
+  }
+
+  if (arg->type == ARGV_TYPE_CHAR) {
     if (val_str[0] == '\0' || val_str[1] != '\0') {
       snprintf(p->error, sizeof(p->error), "Invalid character value '%s' for flag '%s' (expected 1 char)", val_str, flag_name);
       return ARGV_ERR_INVALID_VALUE;
     }
     char_v = val_str[0];
-  } else if (arg->type == ARGV_TYPE_INT || arg->type == ARGV_TYPE_COUNT) {
+  } else if (arg->type == ARGV_TYPE_INT || arg->type == ARGV_TYPE_COUNT || arg->type == ARGV_TYPE_INT_LIST) {
     char *endptr = NULL;
     errno = 0;
     long v = strtol(val_str, &endptr, 10);
@@ -1179,7 +1383,7 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
       return ARGV_ERR_INVALID_VALUE;
     }
     int_v = (int)v;
-  } else if (arg->type == ARGV_TYPE_FLOAT) {
+  } else if (arg->type == ARGV_TYPE_FLOAT || arg->type == ARGV_TYPE_FLOAT_LIST) {
     char *endptr = NULL;
     errno = 0;
     double v = strtod(val_str, &endptr);
@@ -1221,6 +1425,46 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
     new_arr[cur_cnt] = val_str;
     *arr = new_arr;
     if (arg->count_target) *(arg->count_target) = cur_cnt + 1;
+  } else if (arg->type == ARGV_TYPE_INT_LIST) {
+    int **arr = (int **)arg->target;
+    size_t cur_cnt = arg->count_target ? *(arg->count_target) : 0;
+
+    if (!arg->is_set && arg->default_val != NULL) {
+      if (*arr != NULL) {
+        free(*arr);
+        *arr = NULL;
+      }
+      cur_cnt = 0;
+    }
+
+    int *new_arr = (int *)realloc(*arr, (cur_cnt + 1) * sizeof(int));
+    if (!new_arr) {
+      snprintf(p->error, sizeof(p->error), "Memory allocation failed");
+      return ARGV_ERR_ALLOC;
+    }
+    new_arr[cur_cnt] = int_v;
+    *arr = new_arr;
+    if (arg->count_target) *(arg->count_target) = cur_cnt + 1;
+  } else if (arg->type == ARGV_TYPE_FLOAT_LIST) {
+    double **arr = (double **)arg->target;
+    size_t cur_cnt = arg->count_target ? *(arg->count_target) : 0;
+
+    if (!arg->is_set && arg->default_val != NULL) {
+      if (*arr != NULL) {
+        free(*arr);
+        *arr = NULL;
+      }
+      cur_cnt = 0;
+    }
+
+    double *new_arr = (double *)realloc(*arr, (cur_cnt + 1) * sizeof(double));
+    if (!new_arr) {
+      snprintf(p->error, sizeof(p->error), "Memory allocation failed");
+      return ARGV_ERR_ALLOC;
+    }
+    new_arr[cur_cnt] = float_v;
+    *arr = new_arr;
+    if (arg->count_target) *(arg->count_target) = cur_cnt + 1;
   } else if (arg->type == ARGV_TYPE_CHAR) {
     *(char *)(arg->target) = char_v;
   } else if (arg->type == ARGV_TYPE_STR) {
@@ -1238,6 +1482,16 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
 LIBARGV_DEF void argv_set_description(CliParser *p, const char *description) {
   if (!p) return;
   p->description = description;
+}
+
+LIBARGV_DEF void argv_set_epilog(CliParser *p, const char *epilog) {
+  if (!p) return;
+  p->epilog = epilog;
+}
+
+LIBARGV_DEF void argv_set_help_width(CliParser *p, size_t width) {
+  if (!p) return;
+  p->help_width = width;
 }
 
 LIBARGV_DEF void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val) {
@@ -1279,6 +1533,8 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
   }
 
   p->error[0] = '\0';
+  p->remaining_argv = NULL;
+  p->remaining_argc = 0;
 
   if (p->env_copies != NULL) {
     for (size_t i = 0; i < p->env_copy_count; i++) {
@@ -1289,8 +1545,25 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
 
   for (size_t i = 0; i < p->count; i++) {
     p->args[i].is_set = false;
+    if (p->args[i].type == ARGV_TYPE_BOOL && p->args[i].target != NULL) {
+      *(bool *)(p->args[i].target) = p->args[i].default_bool;
+    }
     if (p->args[i].type == ARGV_TYPE_REST || p->args[i].type == ARGV_TYPE_STR_LIST) {
       const char ***arr = (const char ***)p->args[i].target;
+      if (arr != NULL && *arr != NULL) {
+        free(*arr);
+        *arr = NULL;
+      }
+      if (p->args[i].count_target) *(p->args[i].count_target) = 0;
+    } else if (p->args[i].type == ARGV_TYPE_INT_LIST) {
+      int **arr = (int **)p->args[i].target;
+      if (arr != NULL && *arr != NULL) {
+        free(*arr);
+        *arr = NULL;
+      }
+      if (p->args[i].count_target) *(p->args[i].count_target) = 0;
+    } else if (p->args[i].type == ARGV_TYPE_FLOAT_LIST) {
+      double **arr = (double **)p->args[i].target;
       if (arr != NULL && *arr != NULL) {
         free(*arr);
         *arr = NULL;
@@ -1360,7 +1633,37 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
 
   int scan_end = argc;
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--") == 0) { scan_end = i; break; }
+    const char *token = argv[i];
+    if (strcmp(token, "--") == 0) { scan_end = i; break; }
+    if (p->stop_at_positional) {
+      if (strcmp(token, "-h") == 0 || strcmp(token, "--help") == 0) {
+        scan_end = (i + 1 < argc) ? (i + 2) : (i + 1);
+        break;
+      }
+      if (token[0] != '-' || strcmp(token, "-") == 0) {
+        scan_end = i;
+        break;
+      }
+      if (token[1] == '-') {
+        if (strchr(token, '=') == NULL) {
+          CliArg *m = argv_find_flag(p, token, false);
+          if (m && m->type != ARGV_TYPE_BOOL && m->type != ARGV_TYPE_COUNT) {
+            i++;
+          }
+        }
+      } else {
+        size_t tlen = strlen(token);
+        for (size_t c = 1; c < tlen; c++) {
+          char sh[3] = {'-', token[c], '\0'};
+          CliArg *m = argv_find_flag(p, sh, true);
+          if (!m) break;
+          if (m->type != ARGV_TYPE_BOOL && m->type != ARGV_TYPE_COUNT) {
+            if (c + 1 == tlen) i++;
+            break;
+          }
+        }
+      }
+    }
   }
 
   for (int i = 1; i < scan_end; i++) {
@@ -1379,7 +1682,7 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
           fprintf(out, "%-23s%s\n", "Value required:", "No");
           fprintf(out, "%-23s%s\n", "Mandatory:", "No");
           fprintf(out, "\nDescription:\n");
-          argv_print_wrapped_desc(out, "", 2, 0, "Display version information", 50);
+          argv_print_wrapped_desc(out, "", 2, 0, "Display version information", argv_get_desc_width(p, 2));
           return ARGV_HELP_REQUESTED;
         }
         CliArg *found = argv_find_arg(p, inspect);
@@ -1439,6 +1742,13 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
       if (target_pos != NULL) {
         CliStatus st = argv_assign_val(p, target_pos, token, target_pos->name ? target_pos->name : "argument");
         if (st != ARGV_OK) return st;
+        if (p->stop_at_positional) {
+          if (i + 1 < argc) {
+            p->remaining_argv = &argv[i + 1];
+            p->remaining_argc = argc - (i + 1);
+          }
+          break;
+        }
         if (target_pos->type != ARGV_TYPE_REST) {
           current_pos_index++;
         }

@@ -1,14 +1,13 @@
 /*
-gcc -Wall -Wextra -Werror -g test_argv.c -o test_argv && \
-valgrind --leak-check=full --show-leak-kinds=all --track-origins=yes --error-exitcode=1 ./test_argv
+gcc -Wall -Wextra -Werror -g libargv_test.c -o libargv_test && valgrind --leak-check=full --error-exitcode=1 ./libargv_test
 */
 #define _POSIX_C_SOURCE 200112L
 
 #define LIBARGV_IMPLEMENTATION
-#include "standalone_lib/libargv.h"
+#include "../standalone_lib/libargv.h"
 
 #define LIBTEST_IMPLEMENTATION
-#include "../libtest/standalone_lib/libtest.h"
+#include "../../libtest/standalone_lib/libtest.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -363,6 +362,166 @@ TEST(Output, HelpVersionAndHidden) {
   argv_free(&p);
 }
 
+TEST(NewFeatures, PlaceholderGroupsEpilogAndWidth) {
+  const char *pdf = NULL;
+  const char *fmt = NULL;
+  const char *pos = NULL;
+  int *ports = NULL;
+  size_t port_cnt = 0;
+
+  CliParser p;
+  argv_init(&p, "gomdv");
+  argv_set_description(&p, "Markdown viewer");
+  argv_set_epilog(&p, "Examples:\n  gomdv README.md");
+  argv_set_help_width(&p, 35);
+
+  argv_bind_str(&p, "o", "pdf", &pdf, false, NULL, "Export PDF to file");
+  argv_bind_str(&p, NULL, "pdf-format", &fmt, false, "A4,Letter", "Page format with a long description to test width wrapping");
+  argv_bind_int_list(&p, "p", "port", &ports, &port_cnt, false, NULL, "Ports");
+  argv_bind_pos(&p, "target", &pos, false, NULL, "Target file");
+
+  argv_set_placeholder(&p, "pdf", "path");
+  argv_set_placeholder(&p, "port", "<port>");
+  argv_set_placeholder(&p, "target", "file");
+  argv_set_help_group(&p, "pdf", "PDF Options");
+  argv_set_help_group(&p, "pdf-format", "PDF Options:");
+
+  FILE *tmp = tmpfile();
+  ASSERT_TRUE(tmp != NULL);
+  argv_set_output(&p, tmp);
+  const char *args[] = {"gomdv", "-h"};
+  ASSERT_EQ(argv_parse(&p, 2, args), ARGV_HELP_REQUESTED);
+
+  char buf[4096];
+  read_tmp_output(tmp, buf, sizeof(buf));
+
+  ASSERT_TRUE(strstr(buf, "Markdown viewer") != NULL);
+  ASSERT_TRUE(strstr(buf, "Usage: gomdv [OPTIONS] [target <file>]") != NULL);
+  ASSERT_TRUE(strstr(buf, "-p, --port <port>...") != NULL);
+  ASSERT_TRUE(strstr(buf, "\nPDF Options:\n") != NULL);
+  ASSERT_TRUE(strstr(buf, "-o, --pdf <path>") != NULL);
+  ASSERT_TRUE(strstr(buf, "Examples:\n  gomdv README.md") != NULL);
+
+  argv_set_help_width(&p, 0);
+  setenv("COLUMNS", "80", 1);
+  tmp = tmpfile();
+  ASSERT_TRUE(tmp != NULL);
+  argv_set_output(&p, tmp);
+  ASSERT_EQ(argv_parse(&p, 2, args), ARGV_HELP_REQUESTED);
+  read_tmp_output(tmp, buf, sizeof(buf));
+  ASSERT_TRUE(strstr(buf, "PDF Options:") != NULL);
+  unsetenv("COLUMNS");
+
+  argv_free(&p);
+}
+
+TEST(NewFeatures, DuplicateFlagsAndBoolReset) {
+  bool b1 = false, b2 = false;
+  CliParser p_dup;
+  argv_init(&p_dup, "app");
+  argv_bind_bool(&p_dup, "a", "alpha", &b1, "A");
+  argv_bind_bool(&p_dup, "a", "other", &b2, "Dup short");
+  const char *a_dup[] = {"app"};
+  ASSERT_EQ(argv_parse(&p_dup, 1, a_dup), ARGV_ERR_INVALID_VALUE);
+  ASSERT_TRUE(strstr(argv_get_error(&p_dup), "Duplicate short flag") != NULL);
+  argv_free(&p_dup);
+
+  bool open = true;
+  CliParser p;
+  argv_init(&p, "app");
+  argv_bind_bool(&p, NULL, "open", &open, "Open");
+
+  const char *a1[] = {"app", "--no-open"};
+  ASSERT_EQ(argv_parse(&p, 2, a1), ARGV_OK);
+  ASSERT_FALSE(open);
+
+  const char *a2[] = {"app"};
+  ASSERT_EQ(argv_parse(&p, 1, a2), ARGV_OK);
+  ASSERT_TRUE(open);
+
+  argv_free(&p);
+}
+
+TEST(NewFeatures, IntAndFloatLists) {
+  int *ports = NULL;
+  size_t port_cnt = 0;
+  double *scales = NULL;
+  size_t scale_cnt = 0;
+
+  CliParser p;
+  argv_init(&p, "app");
+  argv_set_env_prefix(&p, "LISTAPP");
+  argv_bind_int_list(&p, "p", "port", &ports, &port_cnt, false, "80, 443, 8080", "Ports");
+  argv_bind_float_list(&p, "s", "scale", &scales, &scale_cnt, false, NULL, "Scales");
+
+  argv_set_default(&p, "port", "80");
+
+  const char *a1[] = {"app"};
+  ASSERT_EQ(argv_parse(&p, 1, a1), ARGV_OK);
+  ASSERT_EQ(port_cnt, 1);
+  ASSERT_EQ(ports[0], 80);
+  ASSERT_EQ(scale_cnt, 0);
+
+  setenv("LISTAPP_SCALE", "1.25", 1);
+  const char *a2[] = {"app", "-p", "443", "-p", "8080"};
+  ASSERT_EQ(argv_parse(&p, 5, a2), ARGV_OK);
+  ASSERT_EQ(port_cnt, 2);
+  ASSERT_EQ(ports[0], 443);
+  ASSERT_EQ(ports[1], 8080);
+  ASSERT_EQ(scale_cnt, 1);
+  ASSERT_FLOAT_EQ(scales[0], 1.25, 1e-6);
+  unsetenv("LISTAPP_SCALE");
+
+  const char *bad[] = {"app", "-p", "999"};
+  ASSERT_EQ(argv_parse(&p, 3, bad), ARGV_ERR_INVALID_VALUE);
+
+  argv_free(&p);
+}
+
 int main(void) {
   return test_run();
+}
+
+TEST(NewFeatures, StopAtPositionalSubcommands) {
+  int port = 0;
+  const char *cmd = NULL;
+
+  CliParser root;
+  argv_init(&root, "mytool");
+  argv_set_stop_at_positional(&root, true);
+  argv_bind_int(&root, "p", "port", &port, false, NULL, "Port");
+  argv_bind_pos(&root, "command", &cmd, true, "commit,clone", "Subcommand");
+
+  // 1. mytool -p 8080 --help -> help di root
+  FILE *tmp = tmpfile();
+  ASSERT_TRUE(tmp != NULL);
+  argv_set_output(&root, tmp);
+  const char *a1[] = {"mytool", "-p", "8080", "--help"};
+  ASSERT_EQ(argv_parse(&root, 4, a1), ARGV_HELP_REQUESTED);
+  char buf[2048];
+  read_tmp_output(tmp, buf, sizeof(buf));
+  ASSERT_TRUE(strstr(buf, "Usage: mytool [OPTIONS] <command") != NULL);
+
+  // 2. mytool -p 8080 commit -m hello --help -> passa [-m, hello, --help] al subcommand
+  const char *a2[] = {"mytool", "-p", "8080", "commit", "-m", "hello", "--help"};
+  ASSERT_EQ(argv_parse(&root, 7, a2), ARGV_OK);
+  ASSERT_EQ(port, 8080);
+  ASSERT_STR_EQ(cmd, "commit");
+
+  int rem_argc = 0;
+  const char *const *rem_argv = argv_remaining_args(&root, &rem_argc);
+  ASSERT_EQ(rem_argc, 3);
+  ASSERT_STR_EQ(rem_argv[0], "-m");
+  ASSERT_STR_EQ(rem_argv[1], "hello");
+  ASSERT_STR_EQ(rem_argv[2], "--help");
+
+  // 3. Nessun argomento residuo
+  const char *a3[] = {"mytool", "clone"};
+  ASSERT_EQ(argv_parse(&root, 2, a3), ARGV_OK);
+  ASSERT_STR_EQ(cmd, "clone");
+  rem_argv = argv_remaining_args(&root, &rem_argc);
+  ASSERT_EQ(rem_argc, 0);
+  ASSERT_TRUE(rem_argv == NULL);
+
+  argv_free(&root);
 }

@@ -16,6 +16,8 @@ typedef enum {
   ARGV_TYPE_STR,
   ARGV_TYPE_REST,
   ARGV_TYPE_STR_LIST,
+  ARGV_TYPE_INT_LIST,
+  ARGV_TYPE_FLOAT_LIST,
 } CliType;
 
 typedef enum {
@@ -52,6 +54,8 @@ typedef struct {
   char short_flag[16];
   char long_flag[64];
   const char *help;
+  const char *placeholder;
+  const char *help_group;
   const char *choices;
   const char *env_var;
   const char *default_val;
@@ -75,7 +79,12 @@ typedef struct {
   char version_short[16];
   const char *version_extra;
   const char *description;
+  const char *epilog;
   char env_prefix[64];
+  size_t help_width;
+  bool stop_at_positional;
+  const char *const *remaining_argv;
+  int remaining_argc;
   FILE *output;
   CliArg *args;
   size_t count;
@@ -141,9 +150,26 @@ extern void argv_set_default(CliParser *p, const char *flag_or_name, const char 
 // Sets a summary description of the program displayed in help output
 extern void argv_set_description(CliParser *p, const char *description);
 
+// Sets a trailing text block displayed at the end of help output
+extern void argv_set_epilog(CliParser *p, const char *epilog);
+
+// Configures the description wrapping width in characters (0 = auto from COLUMNS or default 50)
+extern void argv_set_help_width(CliParser *p, size_t width);
+
+// Sets a custom placeholder label shown in help output (e.g. "path" -> <path>)
+extern void argv_set_placeholder(CliParser *p, const char *flag_or_name, const char *placeholder);
+
+// Assigns an option to a named section in help output
+extern void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *group);
+
 // Attaches an explanatory help description to an allowed choice value
 extern bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
 
+// Stops flag and help parsing at the first positional argument, storing trailing tokens for argv_remaining_args
+extern void argv_set_stop_at_positional(CliParser *p, bool stop);
+
+// Returns the trailing arguments captured after stopping at a positional argument and writes their count to out_argc
+extern const char *const *argv_remaining_args(const CliParser *p, int *out_argc);
 // Declares a group of flags (delimited by commas or pipes) that cannot be used together
 extern void argv_add_exclusive(CliParser *p, const char *flags_group);
 
@@ -159,8 +185,14 @@ extern void argv_print_help(const CliParser *p);
 // Configures version information and enables the --version flag and optional short alias
 extern void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info);
 
-// Binds an option that can be repeated to collect values into an array (-I dir1 -I dir2)
+// Binds an option that can be repeated to collect string values into an array (-I dir1 -I dir2)
 extern void argv_bind_str_list(CliParser *p, const char *sh, const char *lng, const char ***target, size_t *count, bool required, const char *choices, const char *help);
+
+// Binds an option that can be repeated to collect integer values into an array (-p 80 -p 443)
+extern void argv_bind_int_list(CliParser *p, const char *sh, const char *lng, int **target, size_t *count, bool required, const char *choices, const char *help);
+
+// Binds an option that can be repeated to collect double values into an array
+extern void argv_bind_float_list(CliParser *p, const char *sh, const char *lng, double **target, size_t *count, bool required, const char *choices, const char *help);
 
 // Marks an argument as hidden so that it does not appear in help screens
 extern void argv_set_hidden(CliParser *p, const char *flag_or_name);

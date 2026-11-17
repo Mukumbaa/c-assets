@@ -9,14 +9,15 @@ A single-header C99 command-line argument parser with direct variable binding, v
 - **Single-header**: Drop `libargv.h` into your project and define `LIBARGV_IMPLEMENTATION` in one source file.
 - **Direct variable binding**: Binds parsed arguments directly to `bool`, `char`, `int`, `double`, and `const char*` pointers.
 - **Explicit defaults**: Set initial values and help-text defaults in one call via `argv_set_default`.
-- **Validation & constraints**: Whitelist choices (`"json,csv,yaml"`), mutual exclusion groups, and cross-flag dependencies.
+- **Validation & constraints**: Whitelist choices (`"json,csv,yaml"`), mutual exclusion groups, cross-flag dependencies, and duplicate flag detection.
 - **POSIX & GNU syntax**: Short-flag clustering (`-xvf`), inline values (`--port=8080`), attached values (`-p8080`, `-p=8080`), negative numbers (`--offset -12`), and stdin/stdout markers (`-o -`).
 - **Standard `--` delimiter**: Treats all tokens following `--` as positional arguments.
 - **Variadic rest arguments**: Collect trailing arguments into a dynamically allocated array.
 - **Environment variable fallback**: Reads unset options from custom or prefixed environment variables (`APP_PORT`).
 - **Redirectable output**: Send help and version output to any `FILE*` stream for automated testing.
-- **Repeatable flags**: Collect repeated option occurrences (like `-I dir1 -I dir2`) into dynamic string arrays via `argv_bind_str_list`.
-- **Hidden arguments**: Mark internal or debug flags as hidden via `argv_set_hidden` to omit them from help screens while keeping them fully functional.
+- **Repeatable flags**: Collect repeated option occurrences into dynamic arrays via `argv_bind_str_list`, `argv_bind_int_list`, and `argv_bind_float_list`.
+- **Clean subcommands**: Stop flag/help parsing at the first positional argument via `argv_set_stop_at_positional` and forward `argv_remaining_args` to sub-parsers.
+- **Rich help customization**: Program description (`argv_set_description`), epilog (`argv_set_epilog`), grouped option sections (`argv_set_help_group`), custom placeholders (`argv_set_placeholder`), configurable/auto `COLUMNS` wrap width (`argv_set_help_width`), and hidden flags (`argv_set_hidden`).
 - **Const-correct API**: Fully compatible with `const char *const *argv` without qualifier warnings.
 
 ---
@@ -50,14 +51,14 @@ In all other files where the parser is needed, include the header normally:
 #include "libargv.h"
 
 int main(int argc, char **argv) {
-    bool dry_run;
-    bool compress;
+    bool dry_run = false;
+    bool compress = false;
     int verbosity = 0;
-    int port;
-    int offset;
-    char mode;
-    const char *format;
-    const char *output;
+    int port = 0;
+    int offset = 0;
+    char mode = 'r';
+    const char *format = NULL;
+    const char *output = NULL;
     bool encrypt = false;
     bool plain = false;
     const char *key = NULL;
@@ -70,6 +71,8 @@ int main(int argc, char **argv) {
     argv_init(&p, argv[0]);
 
     argv_set_version(&p, "1.2.0", "V", "Build 2026.1");
+    argv_set_description(&p, "Fast data transformation and encryption utility.");
+    argv_set_epilog(&p, "Examples:\n  datax -f json -o out.json input.csv");
     argv_set_env_prefix(&p, "APP");
 
     // Option flags
@@ -84,6 +87,12 @@ int main(int argc, char **argv) {
     argv_bind_bool(&p, "e", "encrypt", &encrypt, "Encrypt payload");
     argv_bind_bool(&p, NULL, "plain", &plain, "Disable encryption");
     argv_bind_str(&p, "k", "key", &key, false, NULL, "Encryption key");
+
+    // Custom placeholders & help groups
+    argv_set_placeholder(&p, "output", "path");
+    argv_set_help_group(&p, "encrypt", "Security Options");
+    argv_set_help_group(&p, "plain", "Security Options");
+    argv_set_help_group(&p, "key", "Security Options");
 
     // Defaults (sets target value and registers help text)
     argv_set_default(&p, "dry-run", "false");
@@ -139,7 +148,7 @@ gcc -Wall -Wextra -Wpedantic main.c -o app
 
 | Syntax | Example | Description |
 |---|---|---|
-| No-dash binding | `argv_bind_bool(p, "v", "verbose", ...)` | Accepts options with or without leading hyphens. |
+| No-dash binding | `argv_bind_bool(&p, "v", "verbose", ...)` | Accepts options with or without leading hyphens. |
 | Standard flags | `-p 8080`, `--port 8080` | Space-separated flag values. |
 | Inline values | `--port=8080` | Key-value flag syntax. |
 | Boolean negation | `--no-compress`, `--compress=false` | Disables a boolean switch. |
@@ -154,63 +163,75 @@ gcc -Wall -Wextra -Wpedantic main.c -o app
 
 ## Subcommands
 
-Multi-command CLIs can be structured with a root parser validating subcommands, followed by dispatch to specialized sub-parsers:
+Multi-command CLIs can enable `argv_set_stop_at_positional` on the root parser so global flags are parsed up to the subcommand name, and all trailing tokens (including `--help`) are forwarded intact via `argv_remaining_args`:
 
 ```c
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #define LIBARGV_IMPLEMENTATION
 #include "libargv.h"
 
-static void run_commit(int argc, const char *const *argv);
+static void run_commit(bool verbose, int argc, const char *const *argv);
 
 int main(int argc, char **argv) {
+    bool verbose = false;
     const char *cmd = NULL;
 
     CliParser root;
     argv_init(&root, "git");
+    argv_set_stop_at_positional(&root, true);
+    argv_bind_bool(&root, "v", "verbose", &verbose, "Enable verbose output");
     argv_bind_pos(&root, "command", &cmd, true, "commit,clone", "Subcommand to run");
     argv_set_choice_help(&root, "command", "commit", "Record repository changes");
     argv_set_choice_help(&root, "command", "clone", "Clone remote repository");
 
-    if (argc < 2 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
-        argv_parse(&root, argc, (const char *const *)argv);
+    CliStatus st = argv_parse(&root, argc, (const char *const *)argv);
+    if (st == ARGV_HELP_REQUESTED || st == ARGV_VERSION_REQUESTED) {
         argv_free(&root);
         return 0;
     }
-
-    const char *const check_argv[] = {argv[0], argv[1], NULL};
-    if (argv_parse(&root, 2, check_argv) != ARGV_OK) {
-        fprintf(stderr, "%s\n", argv_get_error(&root));
+    if (st != ARGV_OK) {
+        fprintf(stderr, "git: %s\n", argv_get_error(&root));
         argv_free(&root);
         return 1;
     }
 
-    int sub_argc = argc - 1;
-    const char *const *sub_argv = (const char *const *)&argv[1];
+    int rem_argc = 0;
+    const char *const *rem_argv = argv_remaining_args(&root, &rem_argc);
 
     if (strcmp(cmd, "commit") == 0) {
-        run_commit(sub_argc, sub_argv);
+        if (rem_argc > 0) {
+            run_commit(verbose, rem_argc + 1, rem_argv - 1);
+        } else {
+            const char *const empty_argv[] = {cmd};
+            run_commit(verbose, 1, empty_argv);
+        }
     }
 
     argv_free(&root);
     return 0;
 }
 
-static void run_commit(int argc, const char *const *argv) {
+static void run_commit(bool verbose, int argc, const char *const *argv) {
     const char *message = NULL;
     CliParser p;
     argv_init(&p, "git commit");
     argv_bind_str(&p, "m", "message", &message, true, NULL, "Commit message");
 
-    if (argv_parse(&p, argc, argv) != ARGV_OK) {
-        fprintf(stderr, "%s\n", argv_get_error(&p));
+    CliStatus st = argv_parse(&p, argc, argv);
+    if (st == ARGV_HELP_REQUESTED) {
+        argv_free(&p);
+        exit(0);
+    }
+    if (st != ARGV_OK) {
+        fprintf(stderr, "commit: %s\n", argv_get_error(&p));
         argv_free(&p);
         exit(1);
     }
-    printf("Committed: %s\n", message);
+    printf("[verbose=%d] Committed: %s\n", verbose, message);
     argv_free(&p);
 }
 ```
@@ -227,7 +248,11 @@ void argv_free(CliParser *p);
 const char *argv_get_error(const CliParser *p);
 void argv_set_output(CliParser *p, FILE *out);
 void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info);
+void argv_set_description(CliParser *p, const char *description);
+void argv_set_epilog(CliParser *p, const char *epilog);
+void argv_set_help_width(CliParser *p, size_t width);
 void argv_set_env_prefix(CliParser *p, const char *prefix);
+void argv_set_stop_at_positional(CliParser *p, bool stop);
 ```
 
 ### Option Binding
@@ -244,13 +269,18 @@ void argv_bind_str(CliParser *p, const char *sh, const char *lng, const char **t
 void argv_bind_pos(CliParser *p, const char *name, const char **target, bool required, const char *choices, const char *help);
 void argv_bind_rest(CliParser *p, const char *name, const char ***target, size_t *count, bool required, const char *choices, const char *help);
 void argv_bind_str_list(CliParser *p, const char *sh, const char *lng, const char ***target, size_t *count, bool required, const char *choices, const char *help);
+void argv_bind_int_list(CliParser *p, const char *sh, const char *lng, int **target, size_t *count, bool required, const char *choices, const char *help);
+void argv_bind_float_list(CliParser *p, const char *sh, const char *lng, double **target, size_t *count, bool required, const char *choices, const char *help);
 ```
+
 ### Defaults, Rules & Documentation
 
 ```c
 void argv_set_default(CliParser *p, const char *flag_or_name, const char *default_val);
 void argv_set_env(CliParser *p, const char *flag_or_name, const char *env_var);
 bool argv_set_choice_help(CliParser *p, const char *flag_or_name, const char *choice, const char *help);
+void argv_set_placeholder(CliParser *p, const char *flag_or_name, const char *placeholder);
+void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *group);
 void argv_set_hidden(CliParser *p, const char *flag_or_name);
 void argv_add_exclusive(CliParser *p, const char *flags_group);
 void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
@@ -260,6 +290,7 @@ void argv_add_dependency(CliParser *p, const char *flag, const char *requires_fl
 
 ```c
 CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);
+const char *const *argv_remaining_args(const CliParser *p, int *out_argc);
 void argv_print_help(const CliParser *p);
 ```
 
