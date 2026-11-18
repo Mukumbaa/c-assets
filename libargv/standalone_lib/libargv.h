@@ -240,12 +240,13 @@ static void argv_trim_bounds(const char *in, const char **start, size_t *len) {
 }
 
 static const char *argv_basename(const char *path) {
-  if (!path) return "program";
+  if (!path || path[0] == '\0') return "program";
   const char *p1 = strrchr(path, '/');
   const char *p2 = strrchr(path, '\\');
   const char *base = p1;
   if (p2 && (!base || p2 > base)) base = p2;
-  return base ? base + 1 : path;
+  const char *res = base ? base + 1 : path;
+  return (res[0] == '\0') ? "program" : res;
 }
 
 static void argv_normalize_short(const char *in, char *out, size_t out_sz) {
@@ -482,6 +483,28 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
       }
     }
   } else {
+    if (norm_sh[0] != '\0' && strcmp(norm_sh, "-h") == 0) {
+      snprintf(p->error, sizeof(p->error), "Flag '%s' conflicts with reserved help flag '-h'", norm_sh);
+      p->init_failed = true;
+      return;
+    }
+    if (norm_lng[0] != '\0' && strcmp(norm_lng, "--help") == 0) {
+      snprintf(p->error, sizeof(p->error), "Flag '%s' conflicts with reserved help flag '--help'", norm_lng);
+      p->init_failed = true;
+      return;
+    }
+    if (p->version && p->version[0] != '\0') {
+      if (p->version_short[0] != '\0' && norm_sh[0] != '\0' && strcmp(norm_sh, p->version_short) == 0) {
+        snprintf(p->error, sizeof(p->error), "Flag '%s' conflicts with reserved version short flag '%s'", norm_sh, p->version_short);
+        p->init_failed = true;
+        return;
+      }
+      if (norm_lng[0] != '\0' && strcmp(norm_lng, "--version") == 0) {
+        snprintf(p->error, sizeof(p->error), "Flag '%s' conflicts with reserved version flag '--version'", norm_lng);
+        p->init_failed = true;
+        return;
+      }
+    }
     for (size_t i = 0; i < p->count; i++) {
       if (p->args[i].is_positional) continue;
       if (norm_sh[0] != '\0' && strcmp(p->args[i].short_flag, norm_sh) == 0) {
@@ -509,7 +532,7 @@ static void argv_add_arg_internal(CliParser *p, const char *name, const char *sh
   arg->default_bool = (type == ARGV_TYPE_BOOL) ? *(bool *)target : false;
   arg->required = required;
   arg->is_positional = is_pos;
-  arg->choices = choices;
+  arg->choices = (choices && choices[0] != '\0') ? choices : NULL;
   arg->choice_helps = NULL;
   arg->choice_help_count = 0;
   arg->choice_help_capacity = 0;
@@ -688,6 +711,31 @@ LIBARGV_DEF void argv_set_help_group(CliParser *p, const char *flag_or_name, con
   }
 }
 
+static bool argv_next_token(const char **cursor, const char **out_start, size_t *out_len) {
+  if (!cursor || !*cursor || !out_start || !out_len) return false;
+  const char *p = *cursor;
+  while (*p) {
+    while (*p == ',' || *p == '|') p++;
+    if (!*p) break;
+
+    const char *seg_start = p;
+    while (*p && *p != ',' && *p != '|') p++;
+    const char *seg_end = p;
+
+    while (seg_start < seg_end && isspace((unsigned char)*seg_start)) seg_start++;
+    while (seg_end > seg_start && isspace((unsigned char)*(seg_end - 1))) seg_end--;
+
+    if (seg_end > seg_start) {
+      *out_start = seg_start;
+      *out_len = (size_t)(seg_end - seg_start);
+      *cursor = p;
+      return true;
+    }
+  }
+  *cursor = p;
+  return false;
+}
+
 static bool argv_choice_exists_in_list(const CliArg *arg, const char *choice) {
   if (!arg || !arg->choices || !choice) return false;
 
@@ -697,15 +745,11 @@ static bool argv_choice_exists_in_list(const CliArg *arg, const char *choice) {
   }
 
   const char *p = arg->choices;
-  while (*p) {
-    while (*p == ' ' || *p == ',' || *p == '|') p++;
-    if (!*p) break;
-
-    const char *start = p;
-    while (*p && *p != ',' && *p != '|' && *p != ' ') p++;
-    size_t token_len = (size_t)(p - start);
-
-    if (token_len == strlen(choice) && strncmp(start, choice, token_len) == 0) {
+  const char *start;
+  size_t token_len;
+  size_t choice_len = strlen(choice);
+  while (argv_next_token(&p, &start, &token_len)) {
+    if (token_len == choice_len && strncmp(start, choice, token_len) == 0) {
       return true;
     }
   }
@@ -807,14 +851,9 @@ static bool argv_check_choice(const CliArg *arg, const char *val_str, int int_v,
   }
 
   const char *p = arg->choices;
-  while (*p) {
-    while (*p == ' ' || *p == ',' || *p == '|') p++;
-    if (!*p) break;
-
-    const char *start = p;
-    while (*p && *p != ',' && *p != '|' && *p != ' ') p++;
-    size_t token_len = (size_t)(p - start);
-
+  const char *start;
+  size_t token_len;
+  while (argv_next_token(&p, &start, &token_len)) {
     if (arg->type == ARGV_TYPE_STR || arg->type == ARGV_TYPE_CHAR || arg->type == ARGV_TYPE_REST || arg->type == ARGV_TYPE_STR_LIST) {
       if (token_len == strlen(val_str) && strncmp(start, val_str, token_len) == 0) {
         return true;
@@ -857,11 +896,10 @@ static size_t argv_count_choices(const CliArg *arg) {
 
   size_t count = 0;
   const char *p = arg->choices;
-  while (*p) {
-    while (*p == ' ' || *p == ',' || *p == '|') p++;
-    if (!*p) break;
+  const char *start;
+  size_t token_len;
+  while (argv_next_token(&p, &start, &token_len)) {
     count++;
-    while (*p && *p != ',' && *p != '|' && *p != ' ') p++;
   }
   return count;
 }
@@ -943,11 +981,11 @@ static void argv_print_wrapped_desc(FILE *stream, const char *left_col, size_t i
   bool first_word = true;
 
   while (*p) {
-    while (*p == ' ') p++;
+    while (*p && isspace((unsigned char)*p)) p++;
     if (!*p) break;
 
     const char *start = p;
-    while (*p && *p != ' ') p++;
+    while (*p && !isspace((unsigned char)*p)) p++;
     size_t wlen = (size_t)(p - start);
 
     size_t needed = first_word ? wlen : (1 + wlen);
@@ -1020,7 +1058,7 @@ static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
   size_t desc_width = argv_get_desc_width(p, 23);
   FILE *out = p->output ? p->output : stdout;
 
-  char eff_env[64] = {0};
+  char eff_env[256] = {0};
   argv_get_effective_env(p, arg, eff_env, sizeof(eff_env));
 
   if (arg->is_positional) {
@@ -1071,23 +1109,14 @@ static void argv_print_single_help(const CliParser *p, const CliArg *arg) {
     } else {
       size_t max_clen = 0;
       const char *p_ch = arg->choices;
-      while (*p_ch) {
-        while (*p_ch == ' ' || *p_ch == ',' || *p_ch == '|') p_ch++;
-        if (!*p_ch) break;
-        const char *start = p_ch;
-        while (*p_ch && *p_ch != ',' && *p_ch != '|' && *p_ch != ' ') p_ch++;
-        size_t tlen = (size_t)(p_ch - start);
+      const char *start;
+      size_t tlen;
+      while (argv_next_token(&p_ch, &start, &tlen)) {
         if (tlen > max_clen) max_clen = tlen;
       }
 
       p_ch = arg->choices;
-      while (*p_ch) {
-        while (*p_ch == ' ' || *p_ch == ',' || *p_ch == '|') p_ch++;
-        if (!*p_ch) break;
-        const char *start = p_ch;
-        while (*p_ch && *p_ch != ',' && *p_ch != '|' && *p_ch != ' ') p_ch++;
-        size_t tlen = (size_t)(p_ch - start);
-
+      while (argv_next_token(&p_ch, &start, &tlen)) {
         char tok[256];
         if (tlen < sizeof(tok)) {
           memcpy(tok, start, tlen);
@@ -1136,7 +1165,7 @@ static void argv_print_option_help(const CliParser *p, const CliArg *arg, size_t
   argv_format_type_hint(arg, hint, sizeof(hint));
   strncat(buf, hint, sizeof(buf) - strlen(buf) - 1);
 
-  char env_key[64] = {0};
+  char env_key[256] = {0};
   argv_get_effective_env(p, arg, env_key, sizeof(env_key));
 
   char full_desc[1024];
@@ -1187,8 +1216,8 @@ static void argv_format_pos_label(const CliArg *arg, char *out, size_t out_sz) {
     return;
   }
   char hint[64] = {0};
-  if (arg->choices) {
-    argv_format_type_hint(arg, hint, sizeof(hint));
+  if (arg->choices && arg->choice_help_count < argv_count_choices(arg)) {
+    snprintf(hint, sizeof(hint), " {%s}", arg->choices);
   }
   const char *name = arg->name ? arg->name : "arg";
   if (arg->type == ARGV_TYPE_REST) {
@@ -1310,7 +1339,7 @@ LIBARGV_DEF void argv_print_help(const CliParser *p) {
       char buf[256];
       snprintf(buf, sizeof(buf), "  <%s>", label);
 
-      char env_key[64] = {0};
+      char env_key[256] = {0};
       argv_get_effective_env(p, arg, env_key, sizeof(env_key));
 
       char full_desc[1024];
@@ -1407,6 +1436,10 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
     }
     char_v = val_str[0];
   } else if (arg->type == ARGV_TYPE_INT || arg->type == ARGV_TYPE_COUNT || arg->type == ARGV_TYPE_INT_LIST) {
+    if (isspace((unsigned char)val_str[0])) {
+      snprintf(p->error, sizeof(p->error), "Invalid or out-of-range integer value '%s' for flag '%s'", val_str, flag_name);
+      return ARGV_ERR_INVALID_VALUE;
+    }
     char *endptr = NULL;
     errno = 0;
     long v = strtol(val_str, &endptr, 10);
@@ -1416,6 +1449,10 @@ static CliStatus argv_assign_val(CliParser *p, CliArg *arg, const char *val_str,
     }
     int_v = (int)v;
   } else if (arg->type == ARGV_TYPE_FLOAT || arg->type == ARGV_TYPE_FLOAT_LIST) {
+    if (isspace((unsigned char)val_str[0])) {
+      snprintf(p->error, sizeof(p->error), "Invalid floating-point value '%s' for flag '%s'", val_str, flag_name);
+      return ARGV_ERR_INVALID_VALUE;
+    }
     char *endptr = NULL;
     errno = 0;
     double v = strtod(val_str, &endptr);
@@ -1616,12 +1653,9 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
     CliRule *rule = &p->rules[r];
     if (rule->type == ARGV_RULE_EXCLUSIVE) {
       const char *ptr = rule->target;
-      while (*ptr) {
-        while (*ptr == ' ' || *ptr == ',' || *ptr == '|') ptr++;
-        if (!*ptr) break;
-        const char *start = ptr;
-        while (*ptr && *ptr != ',' && *ptr != '|' && *ptr != ' ') ptr++;
-        size_t len = (size_t)(ptr - start);
+      const char *start;
+      size_t len;
+      while (argv_next_token(&ptr, &start, &len)) {
         char tok[64];
         if (len >= sizeof(tok)) {
           snprintf(p->error, sizeof(p->error), "Flag name too long in exclusive rule group [%s]", rule->target);
@@ -1640,12 +1674,9 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
         return ARGV_ERR_UNKNOWN_FLAG;
       }
       const char *ptr = rule->requires;
-      while (*ptr) {
-        while (*ptr == ' ' || *ptr == ',' || *ptr == '|') ptr++;
-        if (!*ptr) break;
-        const char *start = ptr;
-        while (*ptr && *ptr != ',' && *ptr != '|' && *ptr != ' ') ptr++;
-        size_t len = (size_t)(ptr - start);
+      const char *start;
+      size_t len;
+      while (argv_next_token(&ptr, &start, &len)) {
         char tok[64];
         if (len >= sizeof(tok)) {
           snprintf(p->error, sizeof(p->error), "Flag name too long in dependency rule [%s]", rule->requires);
@@ -1827,6 +1858,10 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
       if (matched->type == ARGV_TYPE_BOOL) {
         bool val = true;
         if (is_negated) {
+          if (inline_val != NULL) {
+            snprintf(p->error, sizeof(p->error), "Negated boolean flag '%s' does not accept a value", flag_name);
+            return ARGV_ERR_INVALID_VALUE;
+          }
           val = false;
         } else if (inline_val) {
           int pb = argv_parse_bool_str(inline_val);
@@ -1842,6 +1877,10 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
       }
 
       if (matched->type == ARGV_TYPE_COUNT) {
+        if (inline_val != NULL) {
+          snprintf(p->error, sizeof(p->error), "Counter flag '%s' does not accept a value", flag_name);
+          return ARGV_ERR_INVALID_VALUE;
+        }
         (*(int *)(matched->target))++;
         matched->is_set = true;
         continue;
@@ -1899,7 +1938,7 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
 
   for (size_t i = 0; i < p->count; i++) {
     CliArg *arg = &p->args[i];
-    char env_key[64] = {0};
+    char env_key[256] = {0};
     argv_get_effective_env(p, arg, env_key, sizeof(env_key));
 
     if (!arg->is_set && env_key[0] != '\0') {
@@ -1928,14 +1967,9 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
       char second_conflict[64] = {0};
 
       const char *ptr = rule->target;
-      while (*ptr) {
-        while (*ptr == ' ' || *ptr == ',' || *ptr == '|') ptr++;
-        if (!*ptr) break;
-
-        const char *start = ptr;
-        while (*ptr && *ptr != ',' && *ptr != '|' && *ptr != ' ') ptr++;
-        size_t len = (size_t)(ptr - start);
-
+      const char *start;
+      size_t len;
+      while (argv_next_token(&ptr, &start, &len)) {
         char tok[64];
         memcpy(tok, start, len);
         tok[len] = '\0';
@@ -1959,14 +1993,9 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
       CliArg *target = argv_find_arg(p, rule->target);
 
       const char *ptr = rule->requires;
-      while (*ptr) {
-        while (*ptr == ' ' || *ptr == ',' || *ptr == '|') ptr++;
-        if (!*ptr) break;
-
-        const char *start = ptr;
-        while (*ptr && *ptr != ',' && *ptr != '|' && *ptr != ' ') ptr++;
-        size_t len = (size_t)(ptr - start);
-
+      const char *start;
+      size_t len;
+      while (argv_next_token(&ptr, &start, &len)) {
         char tok[64];
         memcpy(tok, start, len);
         tok[len] = '\0';
@@ -1998,13 +2027,35 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
 
 LIBARGV_DEF void argv_set_version(CliParser *p, const char *version, const char *sh, const char *extra_info) {
   if (!p) return;
+  char norm_sh[16] = {0};
+  if (sh && sh[0] != '\0') {
+    argv_normalize_short(sh, norm_sh, sizeof(norm_sh));
+  }
+
+  if (version && version[0] != '\0') {
+    if (norm_sh[0] != '\0' && strcmp(norm_sh, "-h") == 0) {
+      snprintf(p->error, sizeof(p->error), "Version short flag '%s' conflicts with reserved help flag '-h'", norm_sh);
+      p->init_failed = true;
+      return;
+    }
+    for (size_t i = 0; i < p->count; i++) {
+      if (p->args[i].is_positional) continue;
+      if (norm_sh[0] != '\0' && strcmp(p->args[i].short_flag, norm_sh) == 0) {
+        snprintf(p->error, sizeof(p->error), "Version short flag '%s' conflicts with already bound flag", norm_sh);
+        p->init_failed = true;
+        return;
+      }
+      if (strcmp(p->args[i].long_flag, "--version") == 0) {
+        snprintf(p->error, sizeof(p->error), "Version flag '--version' conflicts with already bound flag");
+        p->init_failed = true;
+        return;
+      }
+    }
+  }
+
   p->version = version;
   p->version_extra = extra_info;
-  if (sh && sh[0] != '\0') {
-    argv_normalize_short(sh, p->version_short, sizeof(p->version_short));
-  } else {
-    p->version_short[0] = '\0';
-  }
+  snprintf(p->version_short, sizeof(p->version_short), "%s", norm_sh);
 }
 
 #endif // LIBARGV_IMPLEMENTED
