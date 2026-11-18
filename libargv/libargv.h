@@ -35,7 +35,8 @@ typedef enum {
 
 typedef enum {
   ARGV_RULE_EXCLUSIVE,
-  ARGV_RULE_DEPENDENCY
+  ARGV_RULE_DEPENDENCY,
+  ARGV_RULE_ANY_OF
 } CliRuleType;
 
 typedef struct {
@@ -117,6 +118,9 @@ extern void argv_free(CliParser *p);
 // Returns the most recent error message recorded by the parser
 extern const char *argv_get_error(const CliParser *p);
 
+// Returns true if the flag or positional argument was explicitly provided via CLI or environment variable
+extern bool argv_is_set(const CliParser *p, const char *flag_or_name);
+
 // Binds a boolean flag with support for --no- negation
 extern void argv_bind_bool(CliParser *p, const char *sh, const char *lng, bool *target, const char *help);
 
@@ -175,6 +179,9 @@ extern void argv_add_exclusive(CliParser *p, const char *flags_group);
 
 // Enforces that flag requires one or more other flags to be present when supplied
 extern void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
+
+// Enforces that at least one flag from the group (delimited by commas or pipes) is provided
+extern void argv_add_any_of(CliParser *p, const char *flags_group);
 
 // Parses command-line tokens, evaluates rules, inspects env vars, and sets targets
 extern CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);

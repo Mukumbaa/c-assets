@@ -9,7 +9,8 @@ A single-header C99 command-line argument parser with direct variable binding, v
 - **Single-header**: Drop `libargv.h` into your project and define `LIBARGV_IMPLEMENTATION` in one source file.
 - **Direct variable binding**: Binds parsed arguments directly to `bool`, `char`, `int`, `double`, and `const char*` pointers.
 - **Explicit defaults**: Set initial values and help-text defaults in one call via `argv_set_default`.
-- **Validation & constraints**: Whitelist choices (`"json,csv,yaml"`), mutual exclusion groups, cross-flag dependencies, and duplicate flag detection.
+- **Explicit presence check**: Query whether an argument was supplied via CLI or environment variable using `argv_is_set`.
+- **Validation & constraints**: Whitelist choices (`"json,csv,yaml"`), mutual exclusion groups (`argv_add_exclusive`), at-least-one groups (`argv_add_any_of`), cross-flag dependencies (`argv_add_dependency`), and duplicate flag detection.
 - **POSIX & GNU syntax**: Short-flag clustering (`-xvf`), inline values (`--port=8080`), attached values (`-p8080`, `-p=8080`), negative numbers (`--offset -12`), and stdin/stdout markers (`-o -`).
 - **Standard `--` delimiter**: Treats all tokens following `--` as positional arguments.
 - **Variadic rest arguments**: Collect trailing arguments into a dynamically allocated array.
@@ -129,7 +130,8 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    printf("Input: %s, Port: %d, Mode: %c, Output: %s\n", input_file, port, mode, output);
+    printf("Input: %s, Port: %d (explicit: %s), Mode: %c, Output: %s\n",
+        input_file, port, argv_is_set(&p, "port") ? "yes" : "no", mode, output);
 
     argv_free(&p);
     return 0;
@@ -284,12 +286,14 @@ void argv_set_help_group(CliParser *p, const char *flag_or_name, const char *gro
 void argv_set_hidden(CliParser *p, const char *flag_or_name);
 void argv_add_exclusive(CliParser *p, const char *flags_group);
 void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
+void argv_add_any_of(CliParser *p, const char *flags_group);
 ```
 
 ### Execution
 
 ```c
 CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);
+bool argv_is_set(const CliParser *p, const char *flag_or_name);
 const char *const *argv_remaining_args(const CliParser *p, int *out_argc);
 void argv_print_help(const CliParser *p);
 ```

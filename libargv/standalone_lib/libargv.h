@@ -51,7 +51,8 @@ typedef enum {
 
 typedef enum {
   ARGV_RULE_EXCLUSIVE,
-  ARGV_RULE_DEPENDENCY
+  ARGV_RULE_DEPENDENCY,
+  ARGV_RULE_ANY_OF
 } CliRuleType;
 
 typedef struct {
@@ -133,6 +134,9 @@ LIBARGV_DEF void argv_free(CliParser *p);
 // Returns the most recent error message recorded by the parser
 LIBARGV_DEF const char *argv_get_error(const CliParser *p);
 
+// Returns true if the flag or positional argument was explicitly provided via CLI or environment variable
+LIBARGV_DEF bool argv_is_set(const CliParser *p, const char *flag_or_name);
+
 // Binds a boolean flag with support for --no- negation
 LIBARGV_DEF void argv_bind_bool(CliParser *p, const char *sh, const char *lng, bool *target, const char *help);
 
@@ -191,6 +195,9 @@ LIBARGV_DEF void argv_add_exclusive(CliParser *p, const char *flags_group);
 
 // Enforces that flag requires one or more other flags to be present when supplied
 LIBARGV_DEF void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags);
+
+// Enforces that at least one flag from the group (delimited by commas or pipes) is provided
+LIBARGV_DEF void argv_add_any_of(CliParser *p, const char *flags_group);
 
 // Parses command-line tokens, evaluates rules, inspects env vars, and sets targets
 LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv);
@@ -435,6 +442,28 @@ LIBARGV_DEF void argv_free(CliParser *p) {
 
 LIBARGV_DEF const char *argv_get_error(const CliParser *p) {
   return p ? p->error : "Parser null pointer";
+}
+
+LIBARGV_DEF bool argv_is_set(const CliParser *p, const char *flag_or_name) {
+  if (!p || !flag_or_name) return false;
+  const char *trimmed;
+  size_t tlen;
+  argv_trim_bounds(flag_or_name, &trimmed, &tlen);
+  if (tlen == 0) return false;
+
+  for (size_t i = 0; i < p->count; i++) {
+    const CliArg *a = &p->args[i];
+    if (a->name && strlen(a->name) == tlen && strncmp(a->name, trimmed, tlen) == 0) return a->is_set;
+    if (a->long_flag[0] != '\0') {
+      if (strlen(a->long_flag) == tlen && strncmp(a->long_flag, trimmed, tlen) == 0) return a->is_set;
+      if (strncmp(a->long_flag, "--", 2) == 0 && strlen(a->long_flag + 2) == tlen && strncmp(a->long_flag + 2, trimmed, tlen) == 0) return a->is_set;
+    }
+    if (a->short_flag[0] != '\0') {
+      if (strlen(a->short_flag) == tlen && strncmp(a->short_flag, trimmed, tlen) == 0) return a->is_set;
+      if (a->short_flag[0] == '-' && strlen(a->short_flag + 1) == tlen && strncmp(a->short_flag + 1, trimmed, tlen) == 0) return a->is_set;
+    }
+  }
+  return false;
 }
 
 static bool argv_ensure_capacity(CliParser *p) {
@@ -841,6 +870,11 @@ LIBARGV_DEF void argv_add_exclusive(CliParser *p, const char *flags_group) {
 LIBARGV_DEF void argv_add_dependency(CliParser *p, const char *flag, const char *requires_flags) {
   if (p == NULL || flag == NULL || requires_flags == NULL) return;
   argv_add_rule_internal(p, ARGV_RULE_DEPENDENCY, flag, requires_flags);
+}
+
+LIBARGV_DEF void argv_add_any_of(CliParser *p, const char *flags_group) {
+  if (p == NULL || flags_group == NULL) return;
+  argv_add_rule_internal(p, ARGV_RULE_ANY_OF, flags_group, NULL);
 }
 
 static bool argv_check_choice(const CliArg *arg, const char *val_str, int int_v, double float_v) {
@@ -1651,20 +1685,21 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
 
   for (size_t r = 0; r < p->rule_count; r++) {
     CliRule *rule = &p->rules[r];
-    if (rule->type == ARGV_RULE_EXCLUSIVE) {
+    if (rule->type == ARGV_RULE_EXCLUSIVE || rule->type == ARGV_RULE_ANY_OF) {
+      const char *rule_kind = (rule->type == ARGV_RULE_EXCLUSIVE) ? "exclusive" : "any-of";
       const char *ptr = rule->target;
       const char *start;
       size_t len;
       while (argv_next_token(&ptr, &start, &len)) {
         char tok[64];
         if (len >= sizeof(tok)) {
-          snprintf(p->error, sizeof(p->error), "Flag name too long in exclusive rule group [%s]", rule->target);
+          snprintf(p->error, sizeof(p->error), "Flag name too long in %s rule group [%s]", rule_kind, rule->target);
           return ARGV_ERR_UNKNOWN_FLAG;
         }
         memcpy(tok, start, len);
         tok[len] = '\0';
         if (!argv_find_arg(p, tok)) {
-          snprintf(p->error, sizeof(p->error), "Unknown flag '%s' in exclusive rule group [%s]", tok, rule->target);
+          snprintf(p->error, sizeof(p->error), "Unknown flag '%s' in %s rule group [%s]", tok, rule_kind, rule->target);
           return ARGV_ERR_UNKNOWN_FLAG;
         }
       }
@@ -2006,6 +2041,30 @@ LIBARGV_DEF CliStatus argv_parse(CliParser *p, int argc, const char *const *argv
           snprintf(p->error, sizeof(p->error), "Flag '%s' requires '%s' to be set", t_name, tok);
           return ARGV_ERR_DEPENDENCY;
         }
+      }
+    } else if (rule->type == ARGV_RULE_ANY_OF) {
+      size_t token_count = 0;
+      size_t set_count = 0;
+
+      const char *ptr = rule->target;
+      const char *start;
+      size_t len;
+      while (argv_next_token(&ptr, &start, &len)) {
+        token_count++;
+        char tok[64];
+        memcpy(tok, start, len);
+        tok[len] = '\0';
+        CliArg *a = argv_find_arg(p, tok);
+        if (a && a->is_set) {
+          set_count++;
+          break;
+        }
+      }
+
+      if (token_count > 0 && set_count == 0) {
+        snprintf(p->error, sizeof(p->error),
+            "At least one flag in group [%s] must be set", rule->target);
+        return ARGV_ERR_MISSING_REQUIRED;
       }
     }
   }
