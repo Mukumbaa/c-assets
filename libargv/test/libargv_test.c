@@ -492,7 +492,6 @@ TEST(NewFeatures, StopAtPositionalSubcommands) {
   argv_bind_int(&root, "p", "port", &port, false, NULL, "Port");
   argv_bind_pos(&root, "command", &cmd, true, "commit,clone", "Subcommand");
 
-  // 1. mytool -p 8080 --help -> help di root
   FILE *tmp = tmpfile();
   ASSERT_TRUE(tmp != NULL);
   argv_set_output(&root, tmp);
@@ -502,7 +501,6 @@ TEST(NewFeatures, StopAtPositionalSubcommands) {
   read_tmp_output(tmp, buf, sizeof(buf));
   ASSERT_TRUE(strstr(buf, "Usage: mytool [OPTIONS] <command") != NULL);
 
-  // 2. mytool -p 8080 commit -m hello --help -> passa [-m, hello, --help] al subcommand
   const char *a2[] = {"mytool", "-p", "8080", "commit", "-m", "hello", "--help"};
   ASSERT_EQ(argv_parse(&root, 7, a2), ARGV_OK);
   ASSERT_EQ(port, 8080);
@@ -515,7 +513,6 @@ TEST(NewFeatures, StopAtPositionalSubcommands) {
   ASSERT_STR_EQ(rem_argv[1], "hello");
   ASSERT_STR_EQ(rem_argv[2], "--help");
 
-  // 3. Nessun argomento residuo
   const char *a3[] = {"mytool", "clone"};
   ASSERT_EQ(argv_parse(&root, 2, a3), ARGV_OK);
   ASSERT_STR_EQ(cmd, "clone");
@@ -524,4 +521,230 @@ TEST(NewFeatures, StopAtPositionalSubcommands) {
   ASSERT_TRUE(rem_argv == NULL);
 
   argv_free(&root);
+}
+
+TEST(NewFeatures, IsSetAndAnyOf) {
+  int port = 0;
+  int id = 0;
+  const char *email = NULL;
+  const char *target = NULL;
+
+  CliParser p;
+  argv_init(&p, "app");
+  argv_set_env_prefix(&p, "ANYAPP");
+  argv_bind_int(&p, "p", "port", &port, false, NULL, "Port");
+  argv_bind_int(&p, "i", "id", &id, false, NULL, "ID");
+  argv_bind_str(&p, "e", "email", &email, false, NULL, "Email");
+  argv_bind_pos(&p, "target", &target, false, NULL, "Target");
+
+  argv_set_default(&p, "port", "8080");
+  argv_add_exclusive(&p, "id, email");
+  argv_add_any_of(&p, "id, email");
+
+  const char *none[] = {"app"};
+  ASSERT_EQ(argv_parse(&p, 1, none), ARGV_ERR_MISSING_REQUIRED);
+
+  const char *with_id[] = {"app", "--id", "42", "user1"};
+  ASSERT_EQ(argv_parse(&p, 4, with_id), ARGV_OK);
+  ASSERT_EQ(port, 8080);
+  ASSERT_FALSE(argv_is_set(&p, "port"));
+  ASSERT_FALSE(argv_is_set(&p, "-p"));
+  ASSERT_TRUE(argv_is_set(&p, "id"));
+  ASSERT_TRUE(argv_is_set(&p, "-i"));
+  ASSERT_FALSE(argv_is_set(&p, "email"));
+  ASSERT_TRUE(argv_is_set(&p, "target"));
+  ASSERT_FALSE(argv_is_set(&p, "nonexistent"));
+
+  const char *explicit_def[] = {"app", "-p", "8080", "--email", "a@b.com"};
+  ASSERT_EQ(argv_parse(&p, 5, explicit_def), ARGV_OK);
+  ASSERT_TRUE(argv_is_set(&p, "port"));
+  ASSERT_TRUE(argv_is_set(&p, "--email"));
+  ASSERT_FALSE(argv_is_set(&p, "target"));
+
+  setenv("ANYAPP_ID", "7", 1);
+  const char *from_env[] = {"app"};
+  ASSERT_EQ(argv_parse(&p, 1, from_env), ARGV_OK);
+  ASSERT_EQ(id, 7);
+  ASSERT_TRUE(argv_is_set(&p, "id"));
+  ASSERT_FALSE(argv_is_set(&p, "port"));
+
+  const char *both[] = {"app", "--email", "a@b.com"};
+  ASSERT_EQ(argv_parse(&p, 3, both), ARGV_ERR_MUTUAL_EXCLUSION);
+  unsetenv("ANYAPP_ID");
+
+  CliParser bad_rule;
+  bool ok = false;
+  argv_init(&bad_rule, "app");
+  argv_bind_bool(&bad_rule, "o", "ok", &ok, "OK");
+  argv_add_any_of(&bad_rule, "ok, ghost");
+  const char *help_args[] = {"app", "-h"};
+  ASSERT_EQ(argv_parse(&bad_rule, 2, help_args), ARGV_ERR_UNKNOWN_FLAG);
+  argv_free(&bad_rule);
+
+  argv_free(&p);
+}
+
+TEST(NewFeatures, InlineErrorsPosLabelsAndReservedFlags) {
+  bool open = true;
+  int verbose = 0;
+  CliParser p_inline;
+  argv_init(&p_inline, "app");
+  argv_bind_bool(&p_inline, "o", "open", &open, "Open");
+  argv_bind_count(&p_inline, "v", "verbose", &verbose, "Verbose");
+
+  const char *neg_true[] = {"app", "--no-open=true"};
+  ASSERT_EQ(argv_parse(&p_inline, 2, neg_true), ARGV_ERR_INVALID_VALUE);
+
+  const char *neg_false[] = {"app", "--no-open=false"};
+  ASSERT_EQ(argv_parse(&p_inline, 2, neg_false), ARGV_ERR_INVALID_VALUE);
+
+  const char *cnt_val[] = {"app", "--verbose=2"};
+  ASSERT_EQ(argv_parse(&p_inline, 2, cnt_val), ARGV_ERR_INVALID_VALUE);
+  argv_free(&p_inline);
+
+  const char *cmd = NULL;
+  const char **files = NULL;
+  size_t file_cnt = 0;
+  CliParser p_pos;
+  argv_init(&p_pos, "git");
+  argv_bind_pos(&p_pos, "command", &cmd, true, "commit,clone", "Command");
+  argv_bind_rest(&p_pos, "files", &files, &file_cnt, false, "a,b", "Files");
+  ASSERT_TRUE(argv_set_choice_help(&p_pos, "command", "commit", "Commit"));
+  ASSERT_TRUE(argv_set_choice_help(&p_pos, "command", "clone", "Clone"));
+  ASSERT_TRUE(argv_set_choice_help(&p_pos, "files", "a", "File A"));
+  ASSERT_TRUE(argv_set_choice_help(&p_pos, "files", "b", "File B"));
+
+  FILE *tmp = tmpfile();
+  ASSERT_TRUE(tmp != NULL);
+  argv_set_output(&p_pos, tmp);
+  const char *h_args[] = {"git", "-h"};
+  ASSERT_EQ(argv_parse(&p_pos, 2, h_args), ARGV_HELP_REQUESTED);
+  char buf[4096];
+  read_tmp_output(tmp, buf, sizeof(buf));
+  ASSERT_TRUE(strstr(buf, "Usage: git [OPTIONS] <command> [files...]") != NULL);
+  ASSERT_TRUE(strstr(buf, "<command <str>>") == NULL);
+  ASSERT_TRUE(strstr(buf, "files......") == NULL);
+  argv_free(&p_pos);
+
+  bool f = false;
+  const char *empty_args[] = {"app"};
+
+  CliParser c1;
+  argv_init(&c1, "app");
+  argv_bind_bool(&c1, "h", "host", &f, "Host");
+  ASSERT_EQ(argv_parse(&c1, 1, empty_args), ARGV_ERR_INVALID_VALUE);
+  ASSERT_TRUE(strstr(argv_get_error(&c1), "reserved help flag") != NULL);
+  argv_free(&c1);
+
+  CliParser c2;
+  argv_init(&c2, "app");
+  argv_bind_bool(&c2, "H", "help", &f, "Help");
+  ASSERT_EQ(argv_parse(&c2, 1, empty_args), ARGV_ERR_INVALID_VALUE);
+  argv_free(&c2);
+
+  CliParser c3;
+  argv_init(&c3, "app");
+  argv_set_version(&c3, "1.0", "v", NULL);
+  argv_bind_bool(&c3, "v", "verbose", &f, "Verbose");
+  ASSERT_EQ(argv_parse(&c3, 1, empty_args), ARGV_ERR_INVALID_VALUE);
+  ASSERT_TRUE(strstr(argv_get_error(&c3), "reserved version") != NULL);
+  argv_free(&c3);
+
+  CliParser c4;
+  argv_init(&c4, "app");
+  argv_bind_bool(&c4, "v", "verbose", &f, "Verbose");
+  argv_set_version(&c4, "1.0", "v", NULL);
+  ASSERT_EQ(argv_parse(&c4, 1, empty_args), ARGV_ERR_INVALID_VALUE);
+  ASSERT_TRUE(strstr(argv_get_error(&c4), "conflicts with already bound flag") != NULL);
+  argv_free(&c4);
+
+  CliParser c5;
+  argv_init(&c5, "app");
+  argv_set_version(&c5, "1.0", "h", NULL);
+  ASSERT_EQ(argv_parse(&c5, 1, empty_args), ARGV_ERR_INVALID_VALUE);
+  argv_free(&c5);
+
+  const char *p_help = NULL, *p_ver = NULL;
+  CliParser c_pos;
+  argv_init(&c_pos, "app");
+  argv_bind_pos(&c_pos, "help", &p_help, false, NULL, "Help topic");
+  argv_bind_pos(&c_pos, "version", &p_ver, false, NULL, "Version target");
+  const char *pos_vals[] = {"app", "topic", "v2"};
+  ASSERT_EQ(argv_parse(&c_pos, 3, pos_vals), ARGV_OK);
+  ASSERT_STR_EQ(p_help, "topic");
+  ASSERT_STR_EQ(p_ver, "v2");
+  argv_free(&c_pos);
+}
+
+TEST(NewFeatures, CParityFixesAndEdgeCases) {
+  const char *mode = NULL;
+  int num = 0;
+  double flt = 0.0;
+  CliParser p;
+  argv_init(&p, "app");
+  argv_bind_str(&p, "m", "mode", &mode, false, "fast mode, safe mode", "Mode");
+  argv_bind_int(&p, "n", "num", &num, false, NULL, "Num");
+  argv_bind_float(&p, "f", "flt", &flt, false, NULL, "Float");
+
+  const char *ok_space[] = {"app", "-m", "fast mode"};
+  ASSERT_EQ(argv_parse(&p, 3, ok_space), ARGV_OK);
+  ASSERT_STR_EQ(mode, "fast mode");
+
+  const char *bad_half[] = {"app", "-m", "fast"};
+  ASSERT_EQ(argv_parse(&p, 3, bad_half), ARGV_ERR_INVALID_VALUE);
+
+  const char *lead_int[] = {"app", "-n", " 42"};
+  ASSERT_EQ(argv_parse(&p, 3, lead_int), ARGV_ERR_INVALID_VALUE);
+
+  const char *lead_flt[] = {"app", "-f", " 1.5"};
+  ASSERT_EQ(argv_parse(&p, 3, lead_flt), ARGV_ERR_INVALID_VALUE);
+  argv_free(&p);
+
+  bool a = false, b = false;
+  CliParser p_sp;
+  argv_init(&p_sp, "app");
+  argv_bind_bool(&p_sp, "a", "alpha", &a, "A");
+  argv_bind_bool(&p_sp, "b", "beta", &b, "B");
+  argv_add_exclusive(&p_sp, "alpha beta");
+  const char *a_sp[] = {"app"};
+  ASSERT_EQ(argv_parse(&p_sp, 1, a_sp), ARGV_ERR_UNKNOWN_FLAG);
+  argv_free(&p_sp);
+
+  int long_val = 0;
+  const char *any_str = NULL;
+  CliParser p_env;
+  argv_init(&p_env, "/usr/local/bin/");
+  argv_set_env_prefix(&p_env, "VERY_LONG_MICROSERVICE_PREFIX");
+  argv_bind_int(&p_env, NULL, "very-long-configuration-option-name", &long_val, false, NULL, "First line\n\tsecond line");
+  argv_bind_str(&p_env, "s", "str", &any_str, false, "", "Empty choices treated as none");
+
+  ASSERT_FALSE(argv_set_choice_help(&p_env, "str", "x", "X"));
+  ASSERT_TRUE(strstr(argv_get_error(&p_env), "has no choices defined") != NULL);
+  argv_free(&p_env);
+
+  argv_init(&p_env, "");
+  argv_set_env_prefix(&p_env, "VERY_LONG_MICROSERVICE_PREFIX");
+  argv_bind_int(&p_env, NULL, "very-long-configuration-option-name", &long_val, false, NULL, "First line\n\tsecond line");
+  argv_bind_str(&p_env, "s", "str", &any_str, false, "", "Empty choices");
+
+  const char *long_env = "VERY_LONG_MICROSERVICE_PREFIX_VERY_LONG_CONFIGURATION_OPTION_NAME";
+  setenv(long_env, "123", 1);
+  const char *run_args[] = {"", "-s", "anything"};
+  ASSERT_EQ(argv_parse(&p_env, 3, run_args), ARGV_OK);
+  ASSERT_EQ(long_val, 123);
+  ASSERT_STR_EQ(any_str, "anything");
+  unsetenv(long_env);
+
+  FILE *tmp = tmpfile();
+  ASSERT_TRUE(tmp != NULL);
+  argv_set_output(&p_env, tmp);
+  const char *h_args[] = {"", "-h"};
+  ASSERT_EQ(argv_parse(&p_env, 2, h_args), ARGV_HELP_REQUESTED);
+  char buf[4096];
+  read_tmp_output(tmp, buf, sizeof(buf));
+  ASSERT_TRUE(strstr(buf, "Usage: program [OPTIONS]") != NULL);
+  ASSERT_TRUE(strstr(buf, "First line second line") != NULL);
+  ASSERT_TRUE(strstr(buf, "\n\t") == NULL);
+  ASSERT_TRUE(strstr(buf, long_env) != NULL);
+  argv_free(&p_env);
 }
